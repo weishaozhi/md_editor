@@ -24,6 +24,13 @@ export default function EditorPage() {
   const queryClient = useQueryClient();
   const { setCurrentFile } = useFileStore();
 
+  // ⚠️ Editor 用非受控模式 (defaultValue + ref), 不用受控 value
+  // 原因: React 受控 value + Monaco 在 IME 中文输入时会丢失 composition 状态
+  //   - 用户输入拼音 → onChange → setContent → 重渲染 → value={拼音} 再次覆盖 Monaco 内部 IME 状态
+  //   - 用户按空格选中候选词 → compositionend → onChange('你好') → setContent → 重渲染
+  //   - React 用新 value 重置 Monaco, cursor 跳到末尾, IME 占位符(拼音)残留
+  // 修复: Editor 用 defaultValue, 内容更新通过 editor.setValue(file.content) 在 useEffect 里做
+  // Preview 仍然用 content state 响应变化
   const [content, setContent] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [showVersionPanel, setShowVersionPanel] = useState(false);
@@ -124,10 +131,27 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (file) {
-      setContent(file.content);
       setCurrentFile(file);
     }
   }, [file, setCurrentFile]);
+
+  // 文件内容从后端到来时, 主动同步到 Monaco
+  // - Editor 用 defaultValue="" (空) + 非受控, 避免 React value prop 在 IME 中文输入时打断 composition
+  // - 修复 IME 中文输入 composition 状态被 value prop 覆盖导致 cursor 跳末尾的 bug
+  // - 用 editor.setValue() 主动同步 file.content (不会触发 React 重渲染, 不打断 IME)
+  const prevFileIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!file || !editorMounted) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    // 同一文件: 不重置 (避免覆盖用户输入, 也避免打断 IME)
+    if (prevFileIdRef.current === file.id) return;
+    prevFileIdRef.current = file.id;
+    if (editor.getValue() !== file.content) {
+      editor.setValue(file.content);
+    }
+    setContent(file.content);
+  }, [file, editorMounted]);
 
   const handleEditorChange = (value: string | undefined) => {
     if (value !== undefined) {
@@ -138,8 +162,11 @@ export default function EditorPage() {
 
   const handleSave = useCallback(() => {
     if (!fileId || !file) return;
+    // 优先从 Monaco 实例读最新内容, 避免 content state 滞后
+    const editor = editorRef.current;
+    const latest = editor ? editor.getValue() : content;
     setSaveStatus('saving');
-    updateFileMutation.mutate({ id: file.id, data: { content } });
+    updateFileMutation.mutate({ id: file.id, data: { content: latest } });
   }, [fileId, file, content, updateFileMutation]);
 
   useEffect(() => {
@@ -259,7 +286,7 @@ export default function EditorPage() {
                   <Editor
                     height="100%"
                     defaultLanguage="markdown"
-                    value={content}
+                    defaultValue=""
                     onChange={handleEditorChange}
                     onMount={handleEditorMount}
                     theme="vs-dark"

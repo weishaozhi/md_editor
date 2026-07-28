@@ -16,6 +16,7 @@
 8. [版本面板 X 无响应 + 对比分屏 Overlay](#8-版本面板-x-无响应--对比分屏-overlay)
 9. [版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复](#9-版本时间显示错误--对比-overlay-滚动预览区定位修复)
 10. [版本对比 diff 整列染色 + 编辑界面同步滚动开关](#10-版本对比-diff-整列染色--编辑界面同步滚动开关)
+11. [Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归](#11-monaco-ime-中文输入跳末尾--修复引发的两次布局回归)
 
 ---
 
@@ -953,3 +954,219 @@ useEffect(() => {
 
 **新增：**
 - `backend/test_sync_scroll_ratio.py` — 7 场景同步滚动比例数学验证脚本
+
+---
+
+## 11. Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归
+
+> **修复日期**: 2026-07-29
+> **状态**: ✅ 已修复并验证（保留两道回归作为反面教材写入本文档）
+
+### 11.1 问题描述（用户报告）
+
+在 MD Editor 的 `EditorPage` 编辑器区域，使用**中文输入法**输入时：
+
+1. 输入拼音字母（例如 `nihao`）
+2. **按空格键选中候选词 "你好"**
+3. **症状**：
+   - 中文文字 "你好" **没有出现在当前光标所在位置**，而是 **跳到了文档最后一行末尾**
+   - 当前正在输入的那一行 **保留了英文拼音占位符 "nihao"**
+   - 光标跳到文档最末尾
+
+此外，在**修复该 IME bug 的过程中**，先后引入了**两道新的 UI 回归**（均在文档中保留作为反面教材）：
+
+| # | 回归症状 | 触发改动 |
+|---|---|---|
+| 回归 A | **打开文件后，编辑器只显示源文件栏（左侧），预览栏（右侧）整个消失** | 把 `<Editor value={content}>` 改为 `<Editor key={file.id} defaultValue={file.content}>` |
+| 回归 B | **编辑器无任何内容显示（空白）**，仅 Preview 显示源文件 | 进一步改成 `<Editor key={file.id} defaultValue="">` + `prevEditorMountedRef` 跳过首次 setValue |
+
+### 11.2 根本原因
+
+#### 11.2.1 IME 跳末尾：React 受控 `value` 与 Monaco IME 状态冲突
+
+原始代码：
+
+```tsx
+<Editor
+  value={content}              // ← React 受控 value
+  onChange={handleEditorChange}
+/>
+```
+
+`handleEditorChange` 把 Monaco 内容同步到 React state，React 重渲染时把 `value={content}` 重新传给 `<Editor>`，**Monaco 每次都用新 value 强制重置其内部 IME composition 状态**：
+
+| 阶段 | 行为 | 问题 |
+|---|---|---|
+| 输入拼音 "ni" | `onChange('ni')` → `setContent('ni')` → React 重渲染 `value={'ni'}` | Monaco 内部 IME composition 状态被覆盖，cursor 跳末尾 |
+| 继续输入 " hao" | 拼音占位符在错位置继续显示 | IME 占位符错位 |
+| 按空格选词 "你好" | `compositionend` → `onChange('你好')` → `setContent('你好')` → React 重渲染 `value={'你好'}` | 再次重置 Monaco，cursor 跳末尾，拼音残留 |
+
+**根因**：React 受控 `value` 强制 Monaco 每次都用 React state 覆盖 model，**打断 IME composition 生命周期**。
+
+#### 11.2.2 回归 A：`<Editor key={file.id}>` 导致布局断裂
+
+第一次修复方案：
+
+```tsx
+<Editor
+  key={file.id}
+  defaultValue={file.content}
+/>
+```
+
+设计意图：用 `key={file.id}` 让 React 在切换文件时强制重新挂载 `<Editor>`，`defaultValue={file.content}` 在挂载时一次性注入内容。
+
+**回归根因**：
+- Monaco 实例每次 mount 时**测量父容器尺寸**，初始化 `automaticLayout: true` 触发实时 layout
+- React + Monaco 的 mount/unmount 周期中，**flex 父容器测量时机错位**
+- `<div className="flex-1 flex overflow-hidden">` 父容器的高度/宽度在 Monaco 自动 layout 短暂时间内**被撑开**，导致同级的 Preview div（w-1/2）被挤出可见区域
+- 此外，`key` 改变导致 Monaco 实例销毁重建，恢复后 IME 内部 selection 也会清空，**与原 IME 修复目标冲突**（虽然 mount 时用户通常不在 IME 中）
+
+#### 11.2.3 回归 B：`defaultValue=""` + 跳过首次 setValue 导致 Monaco 显示空白
+
+第二次修复尝试：
+
+```tsx
+<Editor key={file.id} defaultValue="" />
+
+// 试图在 useEffect 里同步 file.content
+const prevEditorMountedRef = useRef(false);
+useEffect(() => {
+  if (!editorMounted) return;
+  if (!prevEditorMountedRef.current) {
+    prevEditorMountedRef.current = true;  // 跳过 setValue!
+    return;
+  }
+  ...
+}, [editorMounted]);
+```
+
+**回归根因**：
+
+1. **首次挂载时序**：
+   - `defaultValue=""`：Monaco mount 到空字符串
+   - `handleEditorMount` 跑 → `setEditorMounted(true)` → useEffect 跑
+   - 此时**首次分支**（`prevEditorMountedRef.current === false`）执行，**没有调 setValue**，只设 `prevEditorMountedRef.current = true`
+   - 之后 `setContent(file.content)` 更新 React state——但 React state 不再传给 `<Editor>`（不再受控），Monaco 仍然是空字符串
+2. **结果**：编辑器显示空白，只有 Preview 显示源文件
+3. **设计错误**：把"首次 mount"作为优化分支跳过，但首次 mount **正是**需要灌入 `file.content` 的关键时刻
+
+### 11.3 解决方案（最终版）
+
+#### 11.3.1 三步走
+
+1. **Editor 改为非受控**：`value={content}` → `defaultValue=""`
+2. **用 `useEffect` + `editor.setValue()` 主动同步文件内容**，不依赖 React 反向控制
+3. **`handleSave` 用 `editor.getValue()`** 拿 Monaco 最新内容
+
+#### 11.3.2 关键代码（最终）
+
+```tsx
+const [content, setContent] = useState('');
+
+const prevFileIdRef = useRef<number | null>(null);
+useEffect(() => {
+  if (!file || !editorMounted) return;
+  const editor = editorRef.current;
+  if (!editor) return;
+  // 同一文件: 不重置 (避免覆盖用户输入, 也避免打断 IME)
+  if (prevFileIdRef.current === file.id) return;
+  prevFileIdRef.current = file.id;
+  if (editor.getValue() !== file.content) {
+    editor.setValue(file.content);
+  }
+  setContent(file.content);
+}, [file, editorMounted]);
+
+const handleEditorChange = (value: string | undefined) => {
+  if (value !== undefined) {
+    setContent(value);
+    setHasUnsavedChanges(true);
+  }
+};
+
+const handleSave = useCallback(() => {
+  if (!fileId || !file) return;
+  const editor = editorRef.current;
+  const latest = editor ? editor.getValue() : content;
+  setSaveStatus('saving');
+  updateFileMutation.mutate({ id: file.id, data: { content: latest } });
+}, [fileId, file, content, updateFileMutation]);
+```
+
+```tsx
+<Editor
+  height="100%"
+  defaultLanguage="markdown"
+  defaultValue=""
+  onChange={handleEditorChange}
+  onMount={handleEditorMount}
+  theme="vs-dark"
+  options={{ ... }}
+/>
+```
+
+#### 11.3.3 设计原理
+
+| 设计选择 | 为什么这样做 |
+|---|---|
+| `defaultValue=""` 而非 `defaultValue={file.content}` | `<Editor>` 在 isLoading=true 时**不渲染**，等 file 到位后才渲染，content 此刻必定可读；但用 `""` 配合 `useEffect` 主动 setValue 是更显式的同步模型 |
+| 不再用 `<Editor key={file.id}>` | 强制重 mount 会引发布局抖动，且销毁 undo history；用 `useEffect` 在 file.id 变化时主动 setValue 已经足够 |
+| `editor.setValue()` 而非 React `value=` prop | **程序主动调 setValue 不会触发 React 重渲染**，因此不会反向打断用户 IME |
+| `handleSave` 用 `editor.getValue()` | React state `content` 在某些时序下可能滞后（譬如 IME composition 期间不会立即触发 onChange），直接读 Monaco model 才拿到最新文本 |
+| 不在 useEffect 中尝试去重 IME | IME 期间用户通常不会切文件，**接受**这个边缘风险 |
+
+### 11.4 测试验证
+
+#### 11.4.1 IME 中文输入测试（已通过）
+
+1. 硬刷新浏览器（Ctrl+Shift+R）加载最新 bundle
+2. 关闭"同步滚动"按钮（避免干扰测试观察）
+3. 切到中文输入法（Windows: Win+Space / macOS: Ctrl+Space）
+4. 在编辑器中间某行中间位置输入拼音，按空格选词
+5. 多次覆盖、删除、重输
+
+**期望结果**：中文出现在光标位置，cursor 随输入推进，无拼音残留，无跳末尾。
+
+#### 11.4.2 布局回归测试（已通过）
+
+| # | 测试场景 | 期望 | 结果 |
+|---|---|---|---|
+| 1 | 打开任意 markdown 文件 | 左右两栏（编辑器 + 预览）各占 50% | ✅ |
+| 2 | 切换文件 | 编辑器和预览都更新新文件内容 | ✅ |
+| 3 | 工具栏切换 viewMode（split / edit / preview）| 编辑器 / 预览 / 分栏模式正常切换 | ✅ |
+| 4 | Ctrl+S 保存 | 提示"已保存"，无内容丢失 | ✅ |
+
+#### 11.4.3 自动化检查
+
+- ✅ `npx tsc --noEmit`：改动文件 0 错误（其他历史 lint 警告无关）
+- ✅ Vite 编译产物确认：含 `defaultValue: ""`、`editor.setValue(file.content)`、`editor.getValue()`；不再含受控 `value: {content}` / `key:`，不再含 `defaultValue: file.content`
+
+### 11.5 关键教训（从两道回归中学到）
+
+1. **受控 vs 非受控的选择要看场景**
+   - 通用 React 表单：受控 value 适合（小数据量、单向输入）
+   - **Monaco Editor 这种重组件 + IME 敏感的复杂场景**：必须用 **非受控 + ref + 主动 setValue**，否则 IME 在每个 onChange 后被 React 重置
+
+2. **`<Editor key={x}>` 是核武器，不是日常工具**
+   - key 变化会销毁并重建整个组件，包括 state、ref、undo history
+   - 每次 mount 都有显著的初始化开销（~100ms+），且会触发下游副作用（automaticLayout、resize observer 重订阅）
+   - **优先**用 props / useEffect 显式同步，避免无谓的 mount/unmount
+
+3. **优化分支要谨慎加**
+   - 之前在 useEffect 里加 "首次 mount 跳过 setValue" 的优化是**过度设计**
+   - **首次 mount 恰好是最需要 setValue 的时刻**——这时 content 第一次从外部流入
+   - 加优化分支前必须想清楚：这个状态值真实第一次出现时在哪个时机？
+
+4. **回归测试要在改完立刻做，不要等用户报告**
+   - 回归 A 没有立刻测布局，只测了"文件内容有没有显示"，漏掉了 Preview 栏
+   - 回归 B 把 `key={file.id}` 改成 `defaultValue=""` 时，**应该立刻测**"打开文件 → 编辑器是否显示源文件"而不是等着看 Preview 是否回归正常
+   - 教训：**改一处立即跑一遍所有相关场景**，别批量改完再统一测
+
+### 11.6 涉及文件清单
+
+**修改：**
+- `frontend/src/pages/EditorPage.tsx` — `<Editor>` 改为非受控（`defaultValue=""`）+ useEffect 主动 `setValue()` 同步文件内容 + `handleSave` 改用 `editor.getValue()`
+
+**文档：**
+- `docs/MAINTENANCE.md` — 追加本章
