@@ -222,7 +222,7 @@ api.interceptors.response.use(
 
 ### 1.4 测试验证
 
-使用 `backend/test_login_flow.py` 进行了 8 项 API 测试，全部通过：
+使用 `backend/test/01_auth/test_login_flow.py` 进行了 8 项 API 测试，全部通过：
 
 | # | 测试用例 | 预期 | 实际 | 结果 |
 |---|---------|------|------|------|
@@ -457,7 +457,7 @@ if (e.key === 'Escape') {
 - 总体状态汇总
 
 ### 5.2 后端登录测试脚本（test_login_flow.py）
-新增 `backend/test_login_flow.py`，提供 8 项端到端登录测试：
+新增 `backend/test/01_auth/test_login_flow.py`，提供 8 项端到端登录测试：
 - 注册、登录（成功/失败）、token 验证、用户信息获取、错误处理
 
 ### 5.3 编辑器 Ctrl+F 自动化测试脚本
@@ -649,7 +649,7 @@ function buildAddedRows(changes) {
 
 #### 8.5.2 diff 行号不越界
 
-`backend/test_compare_overlay_logic.py` —— 4 个场景验证：
+`backend/test/03_version_ui/test_compare_overlay_logic.py` —— 4 个场景验证：
 
 | 场景 | 左侧 RED 区 | 右侧 GREEN 区 |
 |---|---|---|
@@ -679,7 +679,7 @@ function buildAddedRows(changes) {
 
 **新增：**
 - `frontend/src/components/Version/CompareOverlay.tsx` — 全屏分屏对比 overlay
-- `backend/test_compare_overlay_logic.py` — diff 行号不越界验证脚本
+- `backend/test/03_version_ui/test_compare_overlay_logic.py` — diff 行号不越界验证脚本
 
 ---
 
@@ -762,7 +762,7 @@ const formatDate = (dateStr: string) => {
 
 #### 9.5.1 formatDate 时区逻辑
 
-`backend/test_format_date_logic.py` 5 个场景：
+`backend/test/03_version_ui/test_format_date_logic.py` 5 个场景：
 
 | 输入 | 期望 |
 |---|---|
@@ -776,7 +776,7 @@ const formatDate = (dateStr: string) => {
 
 #### 9.5.2 overlay diff 行号不越界（回归）
 
-`backend/test_compare_overlay_logic.py` 4 个场景全部通过，行号均在文件范围内 ✅
+`backend/test/03_version_ui/test_compare_overlay_logic.py` 4 个场景全部通过，行号均在文件范围内 ✅
 
 #### 9.5.3 TypeScript
 
@@ -800,7 +800,7 @@ const formatDate = (dateStr: string) => {
 - `frontend/src/components/Version/CompareOverlay.tsx` — Monaco onDidScrollChange 真正滚动监听；布局改为 Editor 自适应 + Preview 固定 40vh；按比例同步滚动；清理无用 ref
 
 **新增：**
-- `backend/test_format_date_logic.py` — 时区解析逻辑 5 场景验证脚本
+- `backend/test/03_version_ui/test_format_date_logic.py` — 时区解析逻辑 5 场景验证脚本
 
 ---
 
@@ -918,11 +918,11 @@ useEffect(() => {
 
 #### 10.5.1 diff overlay 行号不越界（回归）
 
-`backend/test_compare_overlay_logic.py` 4 个场景仍然全部通过（diff 算法没改）✅
+`backend/test/03_version_ui/test_compare_overlay_logic.py` 4 个场景仍然全部通过（diff 算法没改）✅
 
 #### 10.5.2 同步滚动比例数学
 
-`backend/test_sync_scroll_ratio.py` 7 个场景：
+`backend/test/04_editor_sync/test_sync_scroll_ratio.py` 7 个场景：
 
 | case | src_top | ratio | dst_top | 期望 |
 |---|---|---|---|---|
@@ -953,7 +953,7 @@ useEffect(() => {
 - `frontend/src/pages/EditorPage.tsx` — 新增 `syncScroll` state + 双向同步滚动 + 循环保护 + Monaco 注册 onDidScrollChange
 
 **新增：**
-- `backend/test_sync_scroll_ratio.py` — 7 场景同步滚动比例数学验证脚本
+- `backend/test/04_editor_sync/test_sync_scroll_ratio.py` — 7 场景同步滚动比例数学验证脚本
 
 ---
 
