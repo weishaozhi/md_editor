@@ -20,7 +20,9 @@ backend/test/
 ├── 04_editor_sync/                # 编辑器 ↔ 预览同步滚动
 │   └── test_sync_scroll_ratio.py
 └── 05_export_rename/              # 导出 / 重命名 / 版本评论（3 个新功能 E2E）
-    └── test_rename_export_version_comment.py
+│   └── test_rename_export_version_comment.py
+└── 06_stop_bat_test/               # stop.bat 终点终止验证（防止误杀）
+    └── test_stop_bat.py
 ```
 
 ---
@@ -131,6 +133,23 @@ backend/test/
 | **解决的问题** | 章节 12 —— 验证 3 个新功能：可编辑文件名、导出文件 (.md / .html)、保存版本快照可加评论 |
 | **运行** | `python backend/test/05_export_rename/test_rename_export_version_comment.py` |
 | **退出码** | 0 = 全部通过；1 = 有失败用例；2 = 异常 |
+
+---
+
+## 6. `06_stop_bat_test/` — stop.bat 端到端 + 源码契约测试
+
+### `test_stop_bat.py`
+
+| 项 | 内容 |
+|---|---|
+| **类型** | 半自动 E2E（运行 stop.bat 实际杀进程 + 静态源码契约校验） |
+| **目标** | 验证修复后的 `stop.bat` 真的能 kill 占用 8000/5173 端口的进程，**且不误杀其他 python/node 进程** |
+| **前置** | 前后端均已启动（`start.bat`） |
+| **覆盖场景** | 共 17+ 项断言：<br>**Part 1 源码契约** (~7 项) — 必须用 `Get-NetTCPConnection -LocalPort` 查 PID；必须 `taskkill /F /T /PID` 杀进程树；禁止 `Stop-Process -Name python/node`；禁止 `taskkill /F /IM python.exe / node.exe`；必须 `setlocal enabledelayedexpansion`；端口释放 timeout ≥ 2s<br>**Part 2 实际执行** (~9 项) — 前置：8000/5173 监听中；stop 前 `/docs` 200；stop 后两个端口均无 PID；stop 后 `/docs` 不可达；**宿主机 python/node 进程数不被误杀**（python ≤ 1，node ≤ 3）；被杀 PID 恰是占用端口的 PID<br>**Part 3 幂等性** (4 项) — 重复 stop 在无服务环境下 exit=0；输出含"后端未运行/前端未运行/所有服务已停止"提示 |
+| **解决的问题** | 章节 13 —— 旧 `stop.bat` 用 `Stop-Process -Name python/node` 批量 kill，会误杀 Cursor 内置 TS/ESLint 节点、用户其他 Python/Node 应用；现改为按端口 PID 精确查询 + `taskkill /F /T /PID` 进程树终止 |
+| **运行** | `python backend/test/06_stop_bat_test/test_stop_bat.py` |
+| **退出码** | 0 = PASS；1 = 有 FAIL |
+| **副作用** | 运行后会真的停止前后端 —— 跑完本测试后请用 `start.bat` 重启 |
 
 ---
 
