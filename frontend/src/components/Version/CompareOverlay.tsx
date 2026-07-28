@@ -20,16 +20,6 @@ interface DecorationRow {
   kind: 'added' | 'removed';
 }
 
-type Monaco = typeof import('monaco-editor');
-interface MonacoDecoration {
-  range: import('monaco-editor').Range;
-  options: {
-    isWholeLine: boolean;
-    className: string;
-    marginClassName: string;
-  };
-}
-
 /**
  * 对原文本 (历史) 计算 removed 区间对应的行号
  *  - 只关心 change.removed 的部分（左侧独有的行）
@@ -89,8 +79,10 @@ export default function CompareOverlay({
 
   const leftEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const rightEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const leftDecorationsRef = useRef<string[]>([]);
-  const rightDecorationsRef = useRef<string[]>([]);
+
+  // Monaco 当前 scrollTop (用于 overlay 色块定位)
+  const [leftScrollTop, setLeftScrollTop] = useState(0);
+  const [rightScrollTop, setRightScrollTop] = useState(0);
 
   const [editorReady, setEditorReady] = useState(false);
 
@@ -124,54 +116,6 @@ export default function CompareOverlay({
   const leftRows = useMemo(() => (diff ? buildRemovedRows(diff) : []), [diff]);
   const rightRows = useMemo(() => (diff ? buildAddedRows(diff) : []), [diff]);
 
-  const applyDecorations = () => {
-    const monaco: Monaco | undefined = (window as unknown as { monaco?: Monaco }).monaco;
-    if (!monaco || !leftEditorRef.current || !rightEditorRef.current) return;
-
-    // 左侧编辑器：显示历史，标 red 是 removed（独有的行）
-    const leftDecos: MonacoDecoration[] = [];
-    for (const r of leftRows) {
-      if (r.kind === 'removed') {
-        leftDecos.push({
-          range: new monaco.Range(r.startLine, 1, r.endLine, 1),
-          options: {
-            isWholeLine: true,
-            className: 'diff-line-removed',
-            marginClassName: 'diff-line-removed-margin',
-          },
-        });
-      }
-    }
-    leftDecorationsRef.current = leftEditorRef.current.deltaDecorations(
-      leftDecorationsRef.current,
-      leftDecos,
-    );
-
-    // 右侧编辑器：显示当前，标 green 是 added
-    const rightDecos: MonacoDecoration[] = [];
-    for (const r of rightRows) {
-      if (r.kind === 'added') {
-        rightDecos.push({
-          range: new monaco.Range(r.startLine, 1, r.endLine, 1),
-          options: {
-            isWholeLine: true,
-            className: 'diff-line-added',
-            marginClassName: 'diff-line-added-margin',
-          },
-        });
-      }
-    }
-    rightDecorationsRef.current = rightEditorRef.current.deltaDecorations(
-      rightDecorationsRef.current,
-      rightDecos,
-    );
-  };
-
-  useEffect(() => {
-    if (editorReady) applyDecorations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorReady, leftRows, rightRows]);
-
   const handleEditorMount = (side: 'left' | 'right'): OnMount => (editor) => {
     if (side === 'left') leftEditorRef.current = editor;
     else rightEditorRef.current = editor;
@@ -191,6 +135,9 @@ export default function CompareOverlay({
     const scrollTop = srcEditor.getScrollTop();
     const scrollHeight = srcEditor.getScrollHeight();
     const clientHeight = srcEditor.getLayoutInfo().height;
+    // 更新 overlay 用的 scrollTop state, 让绝对定位的色块跟随 Monaco 滚动
+    if (source === 'left') setLeftScrollTop(scrollTop);
+    else setRightScrollTop(scrollTop);
     if (dstEditor) dstEditor.setScrollTop(scrollTop);
     // Editor 滚动比例 → Preview 滚动位置
     if (scrollHeight > clientHeight) {
@@ -250,6 +197,10 @@ export default function CompareOverlay({
           title={`v${historyVersion.version_num}（历史）`}
           content={historyVersion.content}
           previewRef={leftPreviewRef}
+          editorRef={leftEditorRef}
+          highlightRows={leftRows}
+          highlightKind="removed"
+          scrollTop={leftScrollTop}
           onEditorMount={handleEditorMount('left')}
           onEditorScroll={() => syncEditorScroll('left')}
           onPreviewScroll={() => syncPreviewScroll('left')}
@@ -258,26 +209,24 @@ export default function CompareOverlay({
           title="当前内容"
           content={currentVersionMeta.content}
           previewRef={rightPreviewRef}
+          editorRef={rightEditorRef}
+          highlightRows={rightRows}
+          highlightKind="added"
+          scrollTop={rightScrollTop}
           onEditorMount={handleEditorMount('right')}
           onEditorScroll={() => syncEditorScroll('right')}
           onPreviewScroll={() => syncPreviewScroll('right')}
         />
       </div>
 
-      {/* 全局样式：高亮加/减行 */}
+      {/* 全局样式: diff overlay 高亮 (绝对定位 div, 每行一个色块) */}
       <style>{`
-        .diff-line-added {
-          background: rgba(34, 197, 94, 0.15);
-        }
-        .diff-line-added-margin {
-          background: rgba(34, 197, 94, 0.35);
+        .diff-overlay-added > div {
+          background: rgba(34, 197, 94, 0.22);
           border-left: 3px solid rgb(34, 197, 94);
         }
-        .diff-line-removed {
-          background: rgba(239, 68, 68, 0.15);
-        }
-        .diff-line-removed-margin {
-          background: rgba(239, 68, 68, 0.35);
+        .diff-overlay-removed > div {
+          background: rgba(239, 68, 68, 0.22);
           border-left: 3px solid rgb(239, 68, 68);
         }
       `}</style>
@@ -289,7 +238,17 @@ interface ColumnProps {
   title: string;
   content: string;
   previewRef: React.RefObject<HTMLDivElement>;
+  /** Monaco editor 实例 ref (用于 overlay 计算精确行位置) */
+  editorRef: React.MutableRefObject<Parameters<OnMount>[0] | null>;
+  /** diff 高亮行号 + 类型 */
+  highlightRows: DecorationRow[];
+  /** 高亮类型: added(右绿) / removed(左红) */
+  highlightKind: 'added' | 'removed';
+  /** Monaco 当前 scrollTop */
+  scrollTop: number;
+  /** Monaco mount 回调 (父组件需要 editor ref + lineHeight) */
   onEditorMount: OnMount;
+  /** 滚动事件: 同步对侧 Editor + Preview */
   onEditorScroll: () => void;
   onPreviewScroll: () => void;
 }
@@ -298,6 +257,10 @@ function Column({
   title,
   content,
   previewRef,
+  editorRef,
+  highlightRows,
+  highlightKind,
+  scrollTop,
   onEditorMount,
   onEditorScroll,
   onPreviewScroll,
@@ -308,7 +271,7 @@ function Column({
         {title}
       </div>
       {/* 上半部: Editor 占剩余空间, 内部独立滚动 */}
-      <div className="flex-1 min-h-0 overflow-hidden border-b border-slate-200 dark:border-slate-700">
+      <div className="flex-1 min-h-0 overflow-hidden relative border-b border-slate-200 dark:border-slate-700">
         <Editor
           height="100%"
           defaultLanguage="markdown"
@@ -331,6 +294,17 @@ function Column({
             renderWhitespace: 'none',
           }}
         />
+        {/* diff 行高亮 overlay:
+            - 绝对定位覆盖 Monaco 内容区
+            - 每行一个 div, top 用 editor.getTopForLineNumber(line) 取精确像素位置
+            - height = 当前行 lineHeight (从 editor.getOption(EditorOption.lineHeight) 读)
+            - 永不外溢, 不会像 Monaco className 那样把整列染色 */}
+        <DiffOverlay
+          editorRef={editorRef as React.MutableRefObject<Parameters<OnMount>[0] | null>}
+          highlightRows={highlightRows}
+          scrollTop={scrollTop}
+          highlightKind={highlightKind}
+        />
       </div>
       {/* 下半部: Preview 固定 40% 屏高, 始终在屏幕中可见, 内部独立滚动 */}
       <div
@@ -340,6 +314,70 @@ function Column({
       >
         <MarkdownPreview content={content} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * diff 行高亮 overlay:
+ *  - 用 editor.getTopForLineNumber(line) 拿精确像素位置, 避免 Monaco lineHeight 计算偏差
+ *  - 每行一个 div, top/height 都从 Monaco 真实度量拿
+ *  - 永不外溢, 不会像 Monaco className 那样把整列染色
+ */
+interface DiffOverlayProps {
+  editorRef: React.MutableRefObject<Parameters<OnMount>[0] | null>;
+  highlightRows: DecorationRow[];
+  scrollTop: number;
+  highlightKind: 'added' | 'removed';
+}
+
+function DiffOverlay({ editorRef, highlightRows, scrollTop, highlightKind }: DiffOverlayProps) {
+  // editor 内容尺寸变化时 (例如 word-wrap 切换), 重渲染以更新色块位置
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const d1 = editor.onDidContentSizeChange(() => setVersion((v) => v + 1));
+    const d2 = editor.onDidChangeConfiguration(() => setVersion((v) => v + 1));
+    return () => {
+      d1.dispose();
+      d2.dispose();
+    };
+  }, [editorRef]);
+
+  const editor = editorRef.current;
+  if (!editor || highlightRows.length === 0) return null;
+
+  // 计算每行的精确 top + height (像素)
+  const segments = highlightRows.map((r, i) => {
+    const startTop = editor.getTopForLineNumber(r.startLine);
+    // 下一行的 top = endLine 行底
+    const endBottom = editor.getTopForLineNumber(r.endLine + 1);
+    return {
+      key: `${i}-${r.startLine}-${r.endLine}`,
+      top: startTop - scrollTop,
+      height: endBottom - startTop,
+    };
+  });
+
+  return (
+    <div
+      aria-hidden="true"
+      className={`absolute inset-0 pointer-events-none diff-overlay-${highlightKind}`}
+      style={{ zIndex: 5 }}
+    >
+      {segments.map((s) => (
+        <div
+          key={s.key}
+          style={{
+            position: 'absolute',
+            top: `${s.top}px`,
+            left: 0,
+            right: 0,
+            height: `${s.height}px`,
+          }}
+        />
+      ))}
     </div>
   );
 }

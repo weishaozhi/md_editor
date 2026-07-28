@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fileApi } from '@/services/fileApi';
 import { useFileStore } from '@/store/fileStore';
-import Editor from '@monaco-editor/react';
+import Editor, { OnMount } from '@monaco-editor/react';
 import MarkdownPreview from '@/components/Preview/MarkdownPreview';
 import VersionPanel from '@/components/Version/VersionPanel';
 import CompareOverlay from '@/components/Version/CompareOverlay';
@@ -31,15 +31,26 @@ export default function EditorPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [compareState, setCompareState] = useState<{ historyVersionId: number } | null>(null);
-  const editorRef = useRef<unknown>(null);
+  const [syncScroll, setSyncScroll] = useState(true);
+  const [editorMounted, setEditorMounted] = useState(false);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  // 同步滚动循环保护: 标记当前滚动是程序触发的, 不应再次触发反向同步
+  const isSyncingRef = useRef<'editor' | 'preview' | null>(null);
 
   // 暴露编辑器实例到 window，便于自动化测试和调试
-  const handleEditorMount = useCallback((editor: unknown) => {
+  const handleEditorMount = useCallback((editor: Parameters<OnMount>[0]) => {
     editorRef.current = editor;
+    setEditorMounted(true);
     if (typeof window !== 'undefined') {
       (window as unknown as { __mdEditor?: unknown }).__mdEditor = editor;
     }
   }, []);
+
+  // 同步滚动: Editor ↔ Preview
+  // - Editor 滚动 → Preview 按比例跟随
+  // - Preview 滚动 → Editor 按比例跟随
+  // - 用 isSyncingRef 防止 A 滚触发 B 同步, B 同步又触发 A 滚 的死循环
   useEffect(() => {
     return () => {
       if (typeof window !== 'undefined') {
@@ -47,6 +58,52 @@ export default function EditorPage() {
       }
     };
   }, [handleEditorMount]);
+
+  const handleEditorScroll = useCallback(() => {
+    if (!syncScroll || isSyncingRef.current === 'preview') return;
+    const editor = editorRef.current;
+    const preview = previewScrollRef.current;
+    if (!editor || !preview) return;
+    const scrollHeight = editor.getScrollHeight();
+    const clientHeight = editor.getLayoutInfo().height;
+    if (scrollHeight <= clientHeight) return;
+    const ratio = editor.getScrollTop() / (scrollHeight - clientHeight);
+    const maxPreview = preview.scrollHeight - preview.clientHeight;
+    if (maxPreview <= 0) return;
+    isSyncingRef.current = 'editor';
+    preview.scrollTop = maxPreview * ratio;
+    // 下一帧清掉标记 (避免 setState 期间的二次 onScroll 被错误屏蔽)
+    requestAnimationFrame(() => {
+      isSyncingRef.current = null;
+    });
+  }, [syncScroll]);
+
+  const handlePreviewScroll = useCallback(() => {
+    if (!syncScroll || isSyncingRef.current === 'editor') return;
+    const editor = editorRef.current;
+    const preview = previewScrollRef.current;
+    if (!editor || !preview) return;
+    const maxPreview = preview.scrollHeight - preview.clientHeight;
+    if (maxPreview <= 0) return;
+    const ratio = preview.scrollTop / maxPreview;
+    const scrollHeight = editor.getScrollHeight();
+    const clientHeight = editor.getLayoutInfo().height;
+    if (scrollHeight <= clientHeight) return;
+    isSyncingRef.current = 'preview';
+    editor.setScrollTop((scrollHeight - clientHeight) * ratio);
+    requestAnimationFrame(() => {
+      isSyncingRef.current = null;
+    });
+  }, [syncScroll]);
+
+  // 注册 Monaco 滚动事件 (依赖 editorMounted + syncScroll)
+  useEffect(() => {
+    if (!syncScroll || !editorMounted) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    const d = editor.onDidScrollChange(handleEditorScroll);
+    return () => d.dispose();
+  }, [syncScroll, editorMounted, handleEditorScroll]);
 
   const { data: file, isLoading } = useQuery({
     queryKey: ['file', Number(fileId)],
@@ -96,9 +153,7 @@ export default function EditorPage() {
       // - Monaco 默认 Esc 处理在某些环境（Chrome + 扩展）会失效
       // - 主动调用 closeFindWidget 保证用户一定能关闭查找面板
       if (e.key === 'Escape') {
-        const editor = editorRef.current as
-          | { trigger: (source: string, action: string, payload: unknown) => void }
-          | null;
+        const editor = editorRef.current;
         if (editor) {
           editor.trigger('keyboard', 'closeFindWidget', null);
         }
@@ -184,6 +239,8 @@ export default function EditorPage() {
             saveStatus={saveStatus}
             versionPanelOpen={showVersionPanel}
             collabPanelOpen={showCollab}
+            syncScroll={syncScroll}
+            onToggleSyncScroll={() => setSyncScroll(!syncScroll)}
           />
         </div>
       </header>
@@ -225,7 +282,11 @@ export default function EditorPage() {
                   <Eye className="w-4 h-4 text-slate-500" />
                   <span className="text-sm text-slate-600 dark:text-slate-400">预览</span>
                 </div>
-                <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-slate-900">
+                <div
+                  ref={previewScrollRef}
+                  onScroll={handlePreviewScroll}
+                  className="flex-1 overflow-y-auto p-6 bg-white dark:bg-slate-900"
+                >
                   <MarkdownPreview content={content} />
                 </div>
               </div>

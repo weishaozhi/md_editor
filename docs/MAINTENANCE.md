@@ -15,6 +15,7 @@
 7. [文件清单](#7-文件清单)
 8. [版本面板 X 无响应 + 对比分屏 Overlay](#8-版本面板-x-无响应--对比分屏-overlay)
 9. [版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复](#9-版本时间显示错误--对比-overlay-滚动预览区定位修复)
+10. [版本对比 diff 整列染色 + 编辑界面同步滚动开关](#10-版本对比-diff-整列染色--编辑界面同步滚动开关)
 
 ---
 
@@ -799,3 +800,156 @@ const formatDate = (dateStr: string) => {
 
 **新增：**
 - `backend/test_format_date_logic.py` — 时区解析逻辑 5 场景验证脚本
+
+---
+
+## 10. 版本对比 diff 整列染色 + 编辑界面同步滚动开关
+
+### 10.1 问题描述
+
+1. **版本对比 diff 高亮错位**：当历史/当前版本只改动一行时，期望"左侧 1 行红 + 右侧 1 行绿"，但实际看到"**左侧整列变红 + 右侧整列变绿**"（包括未改动的行）。
+2. **编辑界面缺同步滚动功能**：分屏模式下，编辑栏和预览栏相互独立滚动。期望有一个按钮（默认开启），开启时编辑栏和预览栏**按比例同步滚动**（用户在任一栏滚动，另一栏跟随到对应位置）。
+
+### 10.2 根本原因
+
+#### 10.2.1 diff 高亮整列染色
+
+`CompareOverlay.tsx` 用 `editor.deltaDecorations()` + `{ isWholeLine: true, className: 'diff-line-removed' }` 给行染色。
+
+- Monaco 文档明确：`**isWholeLine**` 是 `className` 渲染时的 flag**，它让 `className` 应用到 view-line 容器
+- 但 Monaco 在某些情况下（特别是 `automaticLayout: true` + 空行或短行）会把 class 应用到 **view-lines 容器**（包裹所有 view-line 的父元素）
+- `.diff-line-removed { background: ... }` 的 background 铺满整个 view-lines 容器 → **整列染色**
+- 即使没有这个 bug，`isWholeLine: true` + 空行/极短内容也可能让 Monaco 把容器高度撑成 100%，导致视觉上"整列变红/变绿"
+
+参考：[microsoft/monaco-editor#2387](https://github.com/microsoft/monaco-editor/issues/2387)、[#4784](https://github.com/microsoft/monaco-editor/issues/4784)
+
+#### 10.2.2 编辑界面无同步滚动
+
+- `EditorPage.tsx` 中 Editor 和 Preview 是两个独立滚动区域，之间没有事件联动
+- 工具栏没有"同步滚动"开关
+
+### 10.3 解决方案
+
+#### 10.3.1 `frontend/src/components/Version/CompareOverlay.tsx` — 自定义 diff 行高亮 overlay
+
+**完全弃用 Monaco `deltaDecorations`**，改用**绝对定位的 DOM overlay**：
+
+1. Column 内 Monaco 父 div 加 `relative` 定位
+2. 在 Monaco 父 div 内同位置放一个 `<DiffOverlay>` 子组件：
+   - `pointer-events-none` 不干扰 Monaco 交互
+   - `absolute inset-0 zIndex: 5` 覆盖 Monaco 可视区
+   - 每个高亮行渲染一个 div：`top = editor.getTopForLineNumber(line) - scrollTop, height = getTopForLineNumber(end+1) - getTopForLineNumber(start)`
+3. `scrollTop` 通过 `onDidScrollChange` 同步到 React state，让 overlay 跟随 Monaco 滚动
+4. 用 `editor.onDidContentSizeChange` / `onDidChangeConfiguration` 触发 overlay 重渲染（处理 word-wrap 切换、行高变化）
+5. CSS 限定为单行高度（`height: ${height}px`），**绝不可能外溢**：
+
+```css
+.diff-overlay-added > div {
+  background: rgba(34, 197, 94, 0.22);
+  border-left: 3px solid rgb(34, 197, 94);
+}
+.diff-overlay-removed > div {
+  background: rgba(239, 68, 68, 0.22);
+  border-left: 3px solid rgb(239, 68, 68);
+}
+```
+
+#### 10.3.2 `frontend/src/components/Editor/EditorToolbar.tsx` — 同步滚动开关按钮
+
+新增 `syncScroll` + `onToggleSyncScroll` props，在版本按钮和协作按钮之间加一个切换按钮：
+- 开启时：`<Link />` 图标 + primary 高亮 + tooltip "已开启：编辑栏与预览栏同步滚动"
+- 关闭时：`<Link2Off />` 图标 + 灰色 + tooltip "已关闭：编辑栏与预览栏独立滚动"
+
+#### 10.3.3 `frontend/src/pages/EditorPage.tsx` — 双向同步滚动
+
+新增 state + 双向同步逻辑：
+
+```ts
+const [syncScroll, setSyncScroll] = useState(true);
+const [editorMounted, setEditorMounted] = useState(false);
+const previewScrollRef = useRef<HTMLDivElement>(null);
+const isSyncingRef = useRef<'editor' | 'preview' | null>(null); // 循环保护
+
+// Editor 滚动 → Preview 按比例
+const handleEditorScroll = useCallback(() => {
+  if (!syncScroll || isSyncingRef.current === 'preview') return;
+  const editor = editorRef.current;
+  const preview = previewScrollRef.current;
+  if (!editor || !preview) return;
+  const scrollHeight = editor.getScrollHeight();
+  const clientHeight = editor.getLayoutInfo().height;
+  if (scrollHeight <= clientHeight) return;        // src 不可滚
+  const ratio = editor.getScrollTop() / (scrollHeight - clientHeight);
+  const maxPreview = preview.scrollHeight - preview.clientHeight;
+  if (maxPreview <= 0) return;                      // dst 不可滚
+  isSyncingRef.current = 'editor';                 // 防止 Preview 滚动触发反向同步
+  preview.scrollTop = maxPreview * ratio;
+  requestAnimationFrame(() => { isSyncingRef.current = null; });
+}, [syncScroll]);
+
+// Preview 滚动 → Editor 按比例
+const handlePreviewScroll = useCallback(() => { /* 同上对称 */ }, [syncScroll]);
+
+// Monaco 注册 onDidScrollChange
+useEffect(() => {
+  if (!syncScroll || !editorMounted) return;
+  const editor = editorRef.current;
+  if (!editor) return;
+  const d = editor.onDidScrollChange(handleEditorScroll);
+  return () => d.dispose();
+}, [syncScroll, editorMounted, handleEditorScroll]);
+```
+
+关键点：
+- **`isSyncingRef` 循环保护**：A 滚触发 B 同步时设标记，B 的 onScroll 看到标记就跳过；下一帧清标记
+- **双方都做 "不可滚保护"**：src 不可滚直接 return，dst 不可滚直接 return，避免无效 setState
+- **`editorMounted` state**：把 `editorRef.current` 的变化通过 React 触发 useEffect 重连
+
+### 10.4 关键设计点
+
+- **弃用 Monaco `deltaDecorations` 做整行高亮**：`isWholeLine: true` + `className` 在 Monaco 内部可能把 class 应用到 view-lines 容器（整列），不可控。改用绝对定位 DOM overlay 完全可控。
+- **用 `editor.getTopForLineNumber(line)` 取精确行像素位置**：比 `(line - 1) * lineHeight` 精确，避免 Monaco 字体度量差异。
+- **同步滚动用"比例"而非"绝对值"**：Editor 和 Preview 内容高度不同，按 `scrollTop / (scrollHeight - clientHeight)` 计算 ratio，跨容器按比例映射。
+- **同步循环保护**：用 `isSyncingRef` 标记程序触发的滚动，避免 A 滚 → B 同步 → B 的 onScroll → A 同步 → 死循环。
+- **方向选择双向同步**：用户在 Editor 或 Preview 任一栏滚动，另一栏跟随；体验最自然。
+
+### 10.5 测试验证
+
+#### 10.5.1 diff overlay 行号不越界（回归）
+
+`backend/test_compare_overlay_logic.py` 4 个场景仍然全部通过（diff 算法没改）✅
+
+#### 10.5.2 同步滚动比例数学
+
+`backend/test_sync_scroll_ratio.py` 7 个场景：
+
+| case | src_top | ratio | dst_top | 期望 |
+|---|---|---|---|---|
+| 顶部 | 0 | 0.000 | 0.0 | 0.0 |
+| 中间 50% | 400 | 0.500 | 300.0 | 300.0 |
+| 底部 100% | 800 | 1.000 | 600.0 | 600.0 |
+| src 不可滚 | 100 | 0.000 | 0.0 | 0.0 |
+| dst 不可滚 | 400 | 0.500 | 0.0 | 0.0 |
+| 不同高度比例 | 200 | 0.200 | 320.0 | 320.0 |
+| 越界保护 | 9999 | 1.000 | 600.0 | 600.0 |
+
+7/7 通过 ✅
+
+#### 10.5.3 TypeScript
+
+`npx tsc --noEmit` — 改动文件 (`CompareOverlay.tsx` / `EditorToolbar.tsx` / `EditorPage.tsx`) 错误数：0 ✅
+
+#### 10.5.4 Vite 编译产物
+
+- `CompareOverlay.tsx`：`DiffOverlay`、`getTopForLineNumber`、`onDidContentSizeChange` ✅
+- `EditorPage.tsx`：`syncScroll`、`setSyncScroll`、`handleEditorScroll`、`handlePreviewScroll` ✅
+
+### 10.6 涉及文件清单
+
+**修改：**
+- `frontend/src/components/Version/CompareOverlay.tsx` — 删除 `deltaDecorations` + 改用 `DiffOverlay` 绝对定位组件
+- `frontend/src/components/Editor/EditorToolbar.tsx` — 新增 `syncScroll` / `onToggleSyncScroll` props + 切换按钮
+- `frontend/src/pages/EditorPage.tsx` — 新增 `syncScroll` state + 双向同步滚动 + 循环保护 + Monaco 注册 onDidScrollChange
+
+**新增：**
+- `backend/test_sync_scroll_ratio.py` — 7 场景同步滚动比例数学验证脚本

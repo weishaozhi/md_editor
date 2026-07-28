@@ -7,6 +7,8 @@ import {
   Code,
   Check,
   Loader2,
+  Link,
+  Link2Off,
 } from 'lucide-react';
 
 type ViewMode = 'split' | 'edit' | 'preview';
@@ -20,6 +22,8 @@ interface EditorToolbarProps {
   saveStatus: 'idle' | 'saving' | 'saved';
   versionPanelOpen?: boolean;
   collabPanelOpen?: boolean;
+  syncScroll?: boolean;
+  onToggleSyncScroll?: () => void;
 }
 
 export default function EditorToolbar({
@@ -31,6 +35,8 @@ export default function EditorToolbar({
   saveStatus,
   versionPanelOpen = false,
   collabPanelOpen = false,
+  syncScroll = true,
+  onToggleSyncScroll,
 }: EditorToolbarProps) {
   return (
     <div className="flex items-center space-x-2">
@@ -62,6 +68,20 @@ export default function EditorToolbar({
       >
         <Clock className="w-4 h-4" />
         <span>版本</span>
+      </button>
+
+      {/* Sync Scroll Toggle (编辑栏 ↔ 预览栏 联动滚动) */}
+      <button
+        onClick={onToggleSyncScroll}
+        className={`p-2 rounded-lg text-sm transition-colors ${
+          syncScroll
+            ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300'
+            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+        }`}
+        title={syncScroll ? '已开启：编辑栏与预览栏同步滚动（点击关闭）' : '已关闭：编辑栏与预览栏独立滚动（点击开启）'}
+        aria-label={syncScroll ? '关闭同步滚动' : '开启同步滚动'}
+      >
+        {syncScroll ? <Link className="w-4 h-4" /> : <Link2Off className="w-4 h-4" />}
       </button>
 
       {/* Collaboration */}
