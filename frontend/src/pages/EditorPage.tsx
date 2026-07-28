@@ -3,22 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fileApi } from '@/services/fileApi';
 import { useFileStore } from '@/store/fileStore';
-import { useAuthStore } from '@/store/authStore';
 import Editor from '@monaco-editor/react';
 import MarkdownPreview from '@/components/Preview/MarkdownPreview';
 import VersionPanel from '@/components/Version/VersionPanel';
+import CompareOverlay from '@/components/Version/CompareOverlay';
 import CollaboratorList from '@/components/Collaboration/CollaboratorList';
 import EditorToolbar from '@/components/Editor/EditorToolbar';
 import {
   ArrowLeft,
-  Save,
-  Clock,
-  Users,
-  SplitSquareHorizontal,
   Eye,
   Code,
   RefreshCw,
-  Check,
 } from 'lucide-react';
 
 type ViewMode = 'split' | 'edit' | 'preview';
@@ -27,7 +22,6 @@ export default function EditorPage() {
   const { fileId } = useParams<{ fileId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { token } = useAuthStore();
   const { setCurrentFile } = useFileStore();
 
   const [content, setContent] = useState('');
@@ -36,6 +30,7 @@ export default function EditorPage() {
   const [showCollab, setShowCollab] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [compareState, setCompareState] = useState<{ historyVersionId: number } | null>(null);
   const editorRef = useRef<unknown>(null);
 
   // 暴露编辑器实例到 window，便于自动化测试和调试
@@ -54,7 +49,7 @@ export default function EditorPage() {
   }, [handleEditorMount]);
 
   const { data: file, isLoading } = useQuery({
-    queryKey: ['file', fileId],
+    queryKey: ['file', Number(fileId)],
     queryFn: () => fileApi.getFile(Number(fileId)),
     enabled: !!fileId,
   });
@@ -63,7 +58,7 @@ export default function EditorPage() {
     mutationFn: ({ id, data }: { id: number; data: { content: string } }) =>
       fileApi.updateFile(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file', fileId] });
+      queryClient.invalidateQueries({ queryKey: ['file', Number(fileId)] });
       setHasUnsavedChanges(false);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -113,10 +108,21 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
+  const createVersionMutation = useMutation({
+    mutationFn: () => fileApi.createVersion(Number(fileId), '手动保存版本'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['versions', Number(fileId)] });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    },
+    onError: () => {
+      setSaveStatus('idle');
+    },
+  });
+
   const handleCreateVersion = () => {
     if (!fileId) return;
-    fileApi.createVersion(Number(fileId), '手动保存版本');
-    queryClient.invalidateQueries({ queryKey: ['versions', fileId] });
+    createVersionMutation.mutate();
   };
 
   if (isLoading) {
@@ -158,7 +164,13 @@ export default function EditorPage() {
             <div>
               <h1 className="font-semibold text-slate-800 dark:text-white">{file.name}</h1>
               <p className="text-xs text-slate-500">
-                {hasUnsavedChanges ? '有未保存的更改' : saveStatus === 'saved' ? '已保存' : '已同步'}
+                {saveStatus === 'saved'
+                  ? '已保存'
+                  : saveStatus === 'saving'
+                  ? '保存中...'
+                  : hasUnsavedChanges
+                  ? '有未保存的更改'
+                  : '已同步'}
               </p>
             </div>
           </div>
@@ -167,10 +179,11 @@ export default function EditorPage() {
             viewMode={viewMode}
             onViewModeChange={setViewMode}
             onSave={handleSave}
-            onCreateVersion={handleCreateVersion}
             onToggleVersion={() => setShowVersionPanel(!showVersionPanel)}
             onToggleCollab={() => setShowCollab(!showCollab)}
             saveStatus={saveStatus}
+            versionPanelOpen={showVersionPanel}
+            collabPanelOpen={showCollab}
           />
         </div>
       </header>
@@ -223,7 +236,15 @@ export default function EditorPage() {
         {/* Right Panels */}
         {showVersionPanel && (
           <div className="w-80 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto">
-            <VersionPanel fileId={Number(fileId)} />
+            <VersionPanel
+              fileId={Number(fileId)}
+              onCreateVersion={handleCreateVersion}
+              onClose={() => setShowVersionPanel(false)}
+              onCompare={(historyVersionId) =>
+                setCompareState({ historyVersionId })
+              }
+              isCreating={createVersionMutation.isPending}
+            />
           </div>
         )}
 
@@ -233,6 +254,16 @@ export default function EditorPage() {
           </div>
         )}
       </div>
+
+      {compareState && fileId && (
+        <CompareOverlay
+          fileId={Number(fileId)}
+          historyVersionId={compareState.historyVersionId}
+          currentVersionId={0}
+          currentContent={content}
+          onClose={() => setCompareState(null)}
+        />
+      )}
     </div>
   );
 }

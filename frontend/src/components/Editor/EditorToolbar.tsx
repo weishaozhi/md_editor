@@ -15,20 +15,22 @@ interface EditorToolbarProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   onSave: () => void;
-  onCreateVersion: () => void;
   onToggleVersion: () => void;
   onToggleCollab: () => void;
   saveStatus: 'idle' | 'saving' | 'saved';
+  versionPanelOpen?: boolean;
+  collabPanelOpen?: boolean;
 }
 
 export default function EditorToolbar({
   viewMode,
   onViewModeChange,
   onSave,
-  onCreateVersion,
   onToggleVersion,
   onToggleCollab,
   saveStatus,
+  versionPanelOpen = false,
+  collabPanelOpen = false,
 }: EditorToolbarProps) {
   return (
     <div className="flex items-center space-x-2">
@@ -48,11 +50,15 @@ export default function EditorToolbar({
         <span>{saveStatus === 'saved' ? '已保存' : '保存'}</span>
       </button>
 
-      {/* Create Version */}
+      {/* Version Panel Toggle */}
       <button
-        onClick={onCreateVersion}
-        className="flex items-center space-x-1 px-3 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm transition-colors"
-        title="创建版本快照"
+        onClick={onToggleVersion}
+        className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+          versionPanelOpen
+            ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300'
+            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+        }`}
+        title="版本历史"
       >
         <Clock className="w-4 h-4" />
         <span>版本</span>
@@ -61,7 +67,11 @@ export default function EditorToolbar({
       {/* Collaboration */}
       <button
         onClick={onToggleCollab}
-        className="flex items-center space-x-1 px-3 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm transition-colors"
+        className={`p-2 rounded-lg text-sm transition-colors ${
+          collabPanelOpen
+            ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300'
+            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+        }`}
         title="协作"
       >
         <Users className="w-4 h-4" />

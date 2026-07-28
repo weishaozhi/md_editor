@@ -13,6 +13,7 @@
 5. [已添加的功能](#5-已添加的功能)
 6. [已知问题和限制](#6-已知问题和限制)
 7. [文件清单](#7-文件清单)
+8. [版本面板 X 无响应 + 对比分屏 Overlay](#8-版本面板-x-无响应--对比分屏-overlay)
 
 ---
 
@@ -545,3 +546,134 @@ setUser(user) → Header 显示用户名
 2. `isAuthenticated` 必须在 `setToken` 调用后的下一个渲染周期中读到 `true`
 3. App.tsx 的 `hasHydrated()` 必须返回 true，否则不渲染路由
 4. navigate 用 `replace:true`，避免 history stack 留下 `/login`
+
+---
+
+## 8. 版本面板 X 无响应 + 对比分屏 Overlay
+
+### 8.1 问题描述
+
+`EditorPage` 右侧的"版本历史"面板存在两个交互问题：
+
+1. **版本面板右上角的 X 按钮点击无响应**。点击后没有任何视觉反馈，面板也不会关闭。
+2. **"对比"按钮同样无响应**。点选历史版本后看不到任何对比效果。
+
+进一步期望改进：对比应该做成"编辑器从中间一分为 2，显示两个版本——左边当前版本、右边所选历史版本，高亮差异行，预览栏也一样"——也就是需要**全屏 overlay**，而非旧的面板内嵌迷你 diff。
+
+### 8.2 根本原因
+
+- **X 按钮无响应**：`VersionPanel` 的 X 按钮 `onClick` 之前调用的是 `setCompareVersion(null)` + `setSelectedVersionId(null)`。其中 `compareVersion` 状态虽然存在但从未真正驱动 UI（只是行内嵌入的迷你 `CompareVersions` 组件依赖它），且 X 按钮本意是"关闭整个面板"——状态语义错位，没有 `onClose` 通知到父组件。
+- **对比按钮无响应 + 体验简陋**：
+  - 旧 `setCompareVersion(versionId)` 要求先点选另一个版本作为基准（`selectedVersionId`），交互依赖用户两次点选，违反直觉。
+  - 旧实现只在面板内嵌了一个 `diffLines` 渲染的迷你视图，没有分屏、没有 Monaco 高亮、没有预览对比、不支持 Esc 关闭。
+  - 同时面板本身没有 `onClose` 回调给父组件，导致外部无法关闭面板。
+
+### 8.3 解决方案
+
+#### 8.3.1 `frontend/src/components/Version/VersionPanel.tsx` — 加 onClose/onCompare prop
+
+- 新增 props：`onClose?: () => void`、`onCompare?: (versionId: number) => void`、`isCreating?: boolean`
+- X 按钮 `onClick = handleClose`：
+  ```ts
+  const handleClose = () => {
+    setSelectedVersionId(null);
+    onClose?.();
+  };
+  ```
+- "对比"按钮改为 `onCompare?.(version.id)`，并 `disabled={!onCompare}` 防御父组件未传时仍可点
+- 删除内部 `CompareVersions` 子组件与 `compareVersion` 状态，单一职责化
+
+#### 8.3.2 `frontend/src/components/Version/CompareOverlay.tsx` — 全屏分屏对比（新建）
+
+- 全屏 `fixed inset-0 z-50`，深色背景
+- 顶部 header：`GitCompare` 图标 + 标题（`对比 v3（历史） ↔ 当前内容`）+ 图例（左红 = 已删除，右绿 = 已新增）+ X 关闭按钮
+- 主体双列 `grid-cols-2`：
+  - 左列 = 历史版本（`historyVersion.content`，通过 `fileApi.getVersion(fileId, historyVersionId)` 拉取）
+  - 右列 = 当前内容（直接传 `currentContent`——用户编辑器中的实时文本，含未保存草稿）
+  - 每列上半 = 只读 Monaco（`readOnly: true`、`domReadOnly: true`、`minimap` 关），下半 = `MarkdownPreview`
+- 差异高亮：
+  - 用 `diffLines(historyContent, currentContent)` 得到 change 数组
+  - 左侧编辑器：在所有 `change.removed` 行加红底（`diff-line-removed`）
+  - 右侧编辑器：在所有 `change.added` 行加绿底（`diff-line-added`）
+  - 行号使用 Monaco 的 `deltaDecorations` API
+- 同步滚动：左/右 Editor 互相 `setScrollTop(getScrollTop())`；左/右 Preview 互相 `scrollTop = src.scrollTop`
+- 键盘：`Escape` 监听器关闭 overlay
+
+#### 8.3.3 `frontend/src/pages/EditorPage.tsx` — 接入 overlay state
+
+- 新增 state：`const [compareState, setCompareState] = useState<{ historyVersionId: number } | null>(null)`
+- `<VersionPanel>` 接入 `onClose={() => setShowVersionPanel(false)}` 和 `onCompare={(historyVersionId) => setCompareState({ historyVersionId })}`
+- 在 `EditorPage` 根节点下渲染 `<CompareOverlay>`，受控于 `compareState`
+
+#### 8.3.4 `frontend/src/components/Editor/EditorToolbar.tsx` — 工具栏版本按钮改为切换式
+
+- 移除 `onCreateVersion` prop（之前是直接触发创建快照）
+- 新增 `versionPanelOpen`/`collabPanelOpen` props 控制按钮 active 高亮
+- 版本按钮 `onClick = onToggleVersion`（只切换面板开关，**创建快照**改为在 `VersionPanel` 内独立按钮）
+- 协作按钮同样改成切换式 + active 高亮
+
+### 8.4 关键设计：左右独立行号计数器
+
+`diffLines` 返回的 change 序列里，`added` 区间只出现在右侧文件，`removed` 区间只出现在左侧文件。如果左右共用一个 line 计数器，行号会越界（因为两侧文件行数不同）。
+
+**正确的做法**：左右各一个计数器，独立推进：
+
+```ts
+function buildRemovedRows(changes) {
+  // 左侧：line 推进条件 = !c.added
+  //   - c.removed → 输出 row  + line += len
+  //   - c.added   → 不输出    (line 不变)
+  //   - context   → 不输出    + line += len
+}
+
+function buildAddedRows(changes) {
+  // 右侧：line 推进条件 = !c.removed
+  //   - c.added   → 输出 row  + line += len
+  //   - c.removed → 不输出    (line 不变)
+  //   - context   → 不输出    + line += len
+}
+```
+
+这样 decoration 范围永远落在对应文件的实际行号上。
+
+### 8.5 测试验证
+
+#### 8.5.1 后端契约
+
+通过 PowerShell 端到端验证（注册→登录→创建文件→保存两个版本→查询历史版本 content）：
+- `POST /api/files/{fileId}/versions` 保存快照 ✅
+- `GET /api/files/{fileId}/versions/{versionId}` 返回完整 content（包含 `content` 字段），供 `CompareOverlay` 左侧 Monaco 使用 ✅
+
+#### 8.5.2 diff 行号不越界
+
+`backend/test_compare_overlay_logic.py` —— 4 个场景验证：
+
+| 场景 | 左侧 RED 区 | 右侧 GREEN 区 |
+|---|---|---|
+| A 单行修改 | (2,2) | (2,2) |
+| B 删一添一 | (2,2), (5,5) | (2,2), (5,5) |
+| C 完全替换（左右行数不等） | (1,1), (2,2) | (1,1), (2,2), (3,3) |
+| D 文末添加 | (空) | (3,3) |
+
+4 个场景 assertion 全部通过：所有 decoration 行号都在对应文件实际行号范围内 ✅
+
+#### 8.5.3 TypeScript
+
+改动相关文件（`VersionPanel.tsx`、`CompareOverlay.tsx`、`EditorPage.tsx`）TypeScript 错误数：0 ✅
+
+#### 8.5.4 Vite HMR 产物
+
+通过 `http://localhost:5174/src/...tsx` 获取浏览器实际服务的产物，确认新版本生效：
+- `VersionPanel.js` 中含 `handleClose`、`onClose?.()`、`onCompare?.(version.id)`
+- `CompareOverlay.js` 中含 `buildRemovedRows`、`buildAddedRows`、`diff-line-added/removed` CSS 类 ✅
+
+### 8.6 涉及文件清单
+
+**修改：**
+- `frontend/src/components/Version/VersionPanel.tsx` — 加 onClose/onCompare prop；删除内部 CompareVersions 状态机
+- `frontend/src/components/Editor/EditorToolbar.tsx` — 版本/协作按钮改为切换式 + active 高亮
+- `frontend/src/pages/EditorPage.tsx` — 接入 CompareOverlay state；清理已不使用的 import
+
+**新增：**
+- `frontend/src/components/Version/CompareOverlay.tsx` — 全屏分屏对比 overlay
+- `backend/test_compare_overlay_logic.py` — diff 行号不越界验证脚本
