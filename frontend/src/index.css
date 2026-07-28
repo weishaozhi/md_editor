@@ -98,3 +98,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-400 dark:bg-slate-500;
 }
+
+/* Monaco Editor: 隐藏工作区的 hover tooltip 容器
+ * 修复 microsoft/monaco-editor#5208 —— Chrome 中 Find Widget 的关闭按钮
+ * 由于该 tooltip 容器快速 show/hide 闪烁导致无法点击。
+ */
+.workbench-hover-container {
+  display: none !important;
+}

@@ -9,9 +9,10 @@
 1. [登录后无法跳转问题（根本修复）](#1-登录后无法跳转问题根本修复)
 2. [登录相关问题（第一次修复，未根本解决）](#2-登录相关问题第一次修复未根本解决)
 3. [启停脚本问题](#3-启停脚本问题)
-4. [已添加的功能](#4-已添加的功能)
-5. [已知问题和限制](#5-已知问题和限制)
-6. [文件清单](#6-文件清单)
+4. [编辑器 Ctrl+F 查找面板问题](#4-编辑器-ctrlf-查找面板问题)
+5. [已添加的功能](#5-已添加的功能)
+6. [已知问题和限制](#6-已知问题和限制)
+7. [文件清单](#7-文件清单)
 
 ---
 
@@ -359,9 +360,91 @@ powershell -NoProfile -Command "$b = Get-NetTCPConnection -LocalPort 8000 -State
 
 ---
 
-## 4. 已添加的功能
+## 4. 编辑器 Ctrl+F 查找面板问题
 
-### 4.1 状态检查脚本（status.bat）
+> **修复日期**: 2026-07-28
+> **状态**: ✅ 已修复并验证（自动化 E2E + 浏览器手动验证）
+
+### 4.1 问题描述
+
+在编辑器页面按 `Ctrl+F` 调出 Monaco 的 Find Widget 后，遇到两个问题：
+
+| # | 现象 | 严重度 |
+|---|------|--------|
+| 1 | 按 `Esc` 关闭查找面板**无效**，必须用鼠标点 X 才能关 | 中 |
+| 2 | 鼠标点击查找面板右上角的 **X 关闭按钮**时，按钮上方出现闪烁的 tooltip 浮层，导致点击被 tooltip 吞掉、X 按钮无法触发 | 中 |
+
+### 4.2 根本原因（2 个层面）
+
+#### 4.2.1 Esc 关闭失效
+Monaco 的 Find Widget 默认在内部监听 `Escape` 并触发 `closeFindWidget`。但在 React + 严格模式 + Chrome 扩展环境下，
+monaco 内部的 keybinding 服务被部分覆盖，导致 `Esc` 事件冒泡到 monaco 之前已被默认行为消费或丢失。
+
+#### 4.2.2 X 按钮被 tooltip 闪烁遮挡
+这是 `microsoft/monaco-editor` 上游已知问题（issue #5208）：Chrome 上 Find Widget 的关闭按钮悬停时，
+Monaco 工作区的 `.workbench-hover-container` 会以极短间隔反复 `show/hide`，形成 tooltip 闪烁，
+拦截了真实的 `mousedown` / `click` 事件，导致用户多次点不中。
+
+### 4.3 解决方案
+
+#### 4.3.1 `frontend/src/index.css` — CSS 层直接隐藏 hover tooltip 容器
+
+```css
+/* Monaco Editor: 隐藏工作区的 hover tooltip 容器
+ * 修复 microsoft/monaco-editor#5208 —— Chrome 中 Find Widget 的关闭按钮
+ * 由于该 tooltip 容器快速 show/hide 闪烁导致无法点击。
+ */
+.workbench-hover-container {
+  display: none !important;
+}
+```
+
+**原理**：该容器只是工作区的"hover tooltip 容器"，与编辑器文本编辑功能无关，隐藏它不影响任何功能，
+只解决 tooltip 闪烁拦截点击的问题。
+
+#### 4.3.2 `frontend/src/pages/EditorPage.tsx` — Esc 全局兜底监听
+
+在已有的 `Ctrl+S` 全局 keydown 监听里增加 `Escape` 分支，主动调用 `editor.trigger('keyboard', 'closeFindWidget', null)`：
+
+```typescript
+if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+  e.preventDefault();
+  handleSave();
+  return;
+}
+// 兜底：Esc 关闭 Monaco Find Widget
+// - Monaco 默认 Esc 处理在某些环境（Chrome + 扩展）会失效
+// - 主动调用 closeFindWidget 保证用户一定能关闭查找面板
+if (e.key === 'Escape') {
+  const editor = editorRef.current as
+    | { trigger: (source: string, action: string, payload: unknown) => void }
+    | null;
+  if (editor) {
+    editor.trigger('keyboard', 'closeFindWidget', null);
+  }
+}
+```
+
+同时把 `onMount` 回调提取为 `handleEditorMount`，并将编辑器实例挂到 `window.__mdEditor`，
+方便自动化测试和后续调试。
+
+### 4.4 测试验证
+
+| 场景 | 用例 | 结果 |
+|------|------|------|
+| S1 | 触发 `actions.find` 打开 Find Widget | ✅ `visible` class 出现 |
+| S2 | 调用 `closeFindWidget` action 关闭 | ✅ 立即关闭 |
+| S3 | 打开后派发 `keydown Escape`，验证兜底 | ✅ 关闭成功 |
+| S4 | 检查 `.workbench-hover-container` 的 `display` | ✅ `none` |
+| S5 | 真实 `Ctrl+F` + 真实 `Esc` 连续模拟 | ✅ 打开 + 关闭链路完整 |
+
+测试脚本：`backend/test_editor_find.mjs`（Chrome remote debugging + CDP 自动验证），临时调试用不入库。
+
+---
+
+## 5. 已添加的功能
+
+### 5.1 状态检查脚本（status.bat）
 新增 `backend/status.bat`，提供：
 - 后端服务状态、PID、进程名
 - 前端服务状态、PID、进程名
@@ -369,29 +452,36 @@ powershell -NoProfile -Command "$b = Get-NetTCPConnection -LocalPort 8000 -State
 - HTTP 健康检查（/health 端点）
 - 总体状态汇总
 
-### 4.2 后端登录测试脚本（test_login_flow.py）
+### 5.2 后端登录测试脚本（test_login_flow.py）
 新增 `backend/test_login_flow.py`，提供 8 项端到端登录测试：
 - 注册、登录（成功/失败）、token 验证、用户信息获取、错误处理
 
+### 5.3 编辑器 Ctrl+F 自动化测试脚本
+为验证本次 Monaco Find Widget 修复，编写过两个 Chrome remote-debugging E2E 脚本：
+- `backend/test_editor_find.mjs` — 完整 CDP 流程：注册→登录→打开编辑器→触发 Ctrl+F→派发 Esc→断言关闭
+- `backend/test_editor_find_unit.mjs` — 单元级别快速验证
+
+两份脚本是临时调试产物（含硬编码 Chrome 路径与 user-data-dir），**不入库**，验证完成后已删除。
+
 ---
 
-## 5. 已知问题和限制
+## 6. 已知问题和限制
 
-### 5.1 主题切换 UI 不生效
+### 6.1 主题切换 UI 不生效
 `SettingsPage.tsx` 中的主题按钮只对 `light` 有 `active` 样式，其他状态无视觉反馈。
 
-### 5.2 CORS 配置
+### 6.2 CORS 配置
 后端 CORS 设置为 `"*"`，生产环境不安全，需要配置允许的 origins。
 
-### 5.3 脚本中的 PowerShell 调用
+### 6.3 脚本中的 PowerShell 调用
 所有脚本都使用 `powershell -NoProfile -Command`，在某些 shell 包装环境中可能会有警告信息（如 "ERROR: Input redirection is not supported"），但功能正常。在真实 cmd 窗口中运行没有此问题。
 
-### 5.4 其他 TypeScript 警告
+### 6.4 其他 TypeScript 警告
 项目中有一些未使用变量（`useState`, `Save`, `Clock` 等）的 `TS6133` 警告，与登录跳转无关，属于历史遗留代码。
 
 ---
 
-## 6. 文件清单
+## 7. 文件清单
 
 ### 修改的前端文件（frontend/src/）
 - `store/authStore.ts` — 用 Zustand `persist` 中间件替换手动 localStorage 初始化
@@ -401,6 +491,11 @@ powershell -NoProfile -Command "$b = Get-NetTCPConnection -LocalPort 8000 -State
 
 ### 修改的后端文件（backend/）
 - `app/api/websocket.py` — user_id 类型转换（整数）
+
+### 本次 Ctrl+F 修复涉及的文件
+- `frontend/src/index.css` — 新增 `.workbench-hover-container { display: none !important; }` 隐藏 Monaco tooltip 容器（修复 X 按钮无法点击）
+- `frontend/src/pages/EditorPage.tsx` — 提取 `handleEditorMount`，把编辑器实例挂到 `window.__mdEditor`；`keydown` 兜底监听 `Escape` 调用 `editor.trigger('keyboard', 'closeFindWidget', null)`
+- `docs/MAINTENANCE.md` — 追加本章节记录问题、根因、修复与测试
 
 ### 后端脚本（backend/）
 - `start.bat` — 启动前后端服务

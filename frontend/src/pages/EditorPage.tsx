@@ -38,6 +38,21 @@ export default function EditorPage() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const editorRef = useRef<unknown>(null);
 
+  // 暴露编辑器实例到 window，便于自动化测试和调试
+  const handleEditorMount = useCallback((editor: unknown) => {
+    editorRef.current = editor;
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __mdEditor?: unknown }).__mdEditor = editor;
+    }
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as unknown as { __mdEditor?: unknown }).__mdEditor;
+      }
+    };
+  }, [handleEditorMount]);
+
   const { data: file, isLoading } = useQuery({
     queryKey: ['file', fileId],
     queryFn: () => fileApi.getFile(Number(fileId)),
@@ -80,6 +95,18 @@ export default function EditorPage() {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         handleSave();
+        return;
+      }
+      // 兜底：Esc 关闭 Monaco Find Widget
+      // - Monaco 默认 Esc 处理在某些环境（Chrome + 扩展）会失效
+      // - 主动调用 closeFindWidget 保证用户一定能关闭查找面板
+      if (e.key === 'Escape') {
+        const editor = editorRef.current as
+          | { trigger: (source: string, action: string, payload: unknown) => void }
+          | null;
+        if (editor) {
+          editor.trigger('keyboard', 'closeFindWidget', null);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -164,9 +191,7 @@ export default function EditorPage() {
                     defaultLanguage="markdown"
                     value={content}
                     onChange={handleEditorChange}
-                    onMount={(editor) => {
-                      editorRef.current = editor;
-                    }}
+                    onMount={handleEditorMount}
                     theme="vs-dark"
                     options={{
                       minimap: { enabled: false },
