@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fileApi } from '@/services/fileApi';
+import api from '@/services/api';
 import { useFileStore } from '@/store/fileStore';
 import Editor, { OnMount } from '@monaco-editor/react';
 import MarkdownPreview from '@/components/Preview/MarkdownPreview';
@@ -191,7 +192,8 @@ export default function EditorPage() {
   }, [handleSave]);
 
   const createVersionMutation = useMutation({
-    mutationFn: () => fileApi.createVersion(Number(fileId), '手动保存版本'),
+    mutationFn: (comment: string) =>
+      fileApi.createVersion(Number(fileId), comment || '手动保存版本'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['versions', Number(fileId)] });
       setSaveStatus('saved');
@@ -202,9 +204,57 @@ export default function EditorPage() {
     },
   });
 
-  const handleCreateVersion = () => {
+  const handleCreateVersion = (comment: string) => {
     if (!fileId) return;
-    createVersionMutation.mutate();
+    createVersionMutation.mutate(comment);
+  };
+
+  const handleExport = async (format: 'md' | 'html') => {
+    if (!fileId) return;
+    try {
+      // 用 axios 直接拿 response（含 headers）以解析 Content-Disposition 的 filename
+      const response = await api.get<Blob>(
+        `/files/${fileId}/export`,
+        { params: { format }, responseType: 'blob' }
+      );
+      const blob = response.data;
+
+      // 优先从 Content-Disposition 解析后端指定的文件名
+      const cd = response.headers['content-disposition'] || '';
+      let filename = '';
+      // RFC 5987: filename*=UTF-8''<urlencoded>
+      const utf8Match = cd.match(/filename\*=UTF-8''([^;]+)/);
+      if (utf8Match) {
+        try {
+          filename = decodeURIComponent(utf8Match[1]);
+        } catch {
+          filename = utf8Match[1];
+        }
+      }
+      // 退化: filename="..."
+      if (!filename) {
+        const asciiMatch = cd.match(/filename="([^"]+)"/);
+        if (asciiMatch) filename = asciiMatch[1];
+      }
+      // 最终兜底: 自己拼
+      if (!filename) {
+        const base = (file?.name || 'untitled').replace(/\.[^.]+$/, '');
+        const ext = format === 'html' ? 'html' : 'md';
+        filename = `${base}.${ext}`;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('导出失败', e);
+      alert('导出失败: ' + (e as Error).message);
+    }
   };
 
   if (isLoading) {
@@ -263,6 +313,7 @@ export default function EditorPage() {
             onSave={handleSave}
             onToggleVersion={() => setShowVersionPanel(!showVersionPanel)}
             onToggleCollab={() => setShowCollab(!showCollab)}
+            onExport={handleExport}
             saveStatus={saveStatus}
             versionPanelOpen={showVersionPanel}
             collabPanelOpen={showCollab}

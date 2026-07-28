@@ -15,6 +15,16 @@ export const fileApi = {
   updateFile: (id: number, data: { name?: string; content?: string; parent_id?: number }) =>
     api.put<FileItem>(`/files/${id}`, data).then(res => res.data),
 
+  renameFile: (id: number, name: string) =>
+    api.put<FileItem>(`/files/${id}`, { name }).then(res => res.data),
+
+  exportFileUrl: (id: number, format: 'md' | 'html') =>
+    `/api/files/${id}/export?format=${format}`,
+  exportFile: (id: number, format: 'md' | 'html') =>
+    api
+      .get<Blob>(`/files/${id}/export`, { params: { format }, responseType: 'blob' })
+      .then(res => res.data),
+
   deleteFile: (id: number) => api.delete(`/files/${id}`).then(res => res.data),
 
   searchFiles: (q: string) => api.get<FileItem[]>('/files/search/', { params: { q } }).then(res => res.data),

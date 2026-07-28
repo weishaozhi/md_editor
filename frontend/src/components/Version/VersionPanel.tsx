@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Clock, RotateCcw, GitCompare, X, Plus } from 'lucide-react';
+import { Clock, RotateCcw, GitCompare, X, Plus, MessageSquare, Check } from 'lucide-react';
 import { fileApi } from '@/services/fileApi';
 
 interface VersionPanelProps {
   fileId: number;
-  onCreateVersion: () => void;
+  onCreateVersion?: (comment: string) => void;
   onClose?: () => void;
   onCompare?: (versionId: number) => void;
   isCreating?: boolean;
@@ -20,6 +20,8 @@ export default function VersionPanel({
 }: VersionPanelProps) {
   const queryClient = useQueryClient();
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
 
   const { data: versions, isLoading } = useQuery({
     queryKey: ['versions', fileId],
@@ -34,6 +36,25 @@ export default function VersionPanel({
       setSelectedVersionId(null);
     },
   });
+
+  const openCommentModal = () => {
+    setCommentDraft('');
+    setShowCommentModal(true);
+  };
+
+  const closeCommentModal = () => {
+    setShowCommentModal(false);
+    setCommentDraft('');
+  };
+
+  const submitCommentModal = () => {
+    const trimmed = commentDraft.trim();
+    setShowCommentModal(false);
+    setCommentDraft('');
+    if (onCreateVersion) {
+      onCreateVersion(trimmed);
+    }
+  };
 
   /**
    * 把后端返回的 created_at 渲染成本地时区字符串。
@@ -79,7 +100,7 @@ export default function VersionPanel({
       </div>
 
       <button
-        onClick={onCreateVersion}
+        onClick={openCommentModal}
         disabled={isCreating}
         className="w-full mb-3 flex items-center justify-center space-x-1 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white py-1.5 rounded-lg text-sm transition-colors"
       >
@@ -144,6 +165,77 @@ export default function VersionPanel({
         </div>
       ) : (
         <p className="text-sm text-slate-500">暂无版本记录</p>
+      )}
+
+      {/* 评论输入 Modal */}
+      {showCommentModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div
+            className="bg-white dark:bg-slate-800 rounded-xl p-5 w-full max-w-md shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold text-slate-800 dark:text-white flex items-center">
+                <MessageSquare className="w-4 h-4 mr-2 text-primary-500" />
+                保存版本快照
+              </h3>
+              <button
+                onClick={closeCommentModal}
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                aria-label="关闭"
+              >
+                <X className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mb-2">
+              可填写版本说明（最多 500 字符）。留空也可以提交。
+            </p>
+            <textarea
+              value={commentDraft}
+              onChange={(e) => {
+                if (e.target.value.length <= 500) {
+                  setCommentDraft(e.target.value);
+                }
+              }}
+              placeholder="例如：完成第一章草稿 / 修复了 X bug"
+              autoFocus
+              rows={3}
+              className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600
+                         rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
+                         dark:bg-slate-900 dark:text-white"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  submitCommentModal();
+                }
+              }}
+            />
+            <div className="flex items-center justify-between mt-1 mb-3">
+              <span className="text-xs text-slate-400">
+                {commentDraft.length} / 500
+              </span>
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={closeCommentModal}
+                className="flex-1 px-3 py-2 text-sm rounded-lg
+                           bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600
+                           text-slate-700 dark:text-slate-200"
+              >
+                取消
+              </button>
+              <button
+                onClick={submitCommentModal}
+                disabled={isCreating}
+                className="flex-1 px-3 py-2 text-sm rounded-lg flex items-center justify-center space-x-1
+                           bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white"
+              >
+                <Check className="w-4 h-4" />
+                <span>保存版本</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

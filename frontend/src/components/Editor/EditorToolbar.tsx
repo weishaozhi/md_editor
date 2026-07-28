@@ -9,9 +9,11 @@ import {
   Loader2,
   Link,
   Link2Off,
+  Download,
 } from 'lucide-react';
 
 type ViewMode = 'split' | 'edit' | 'preview';
+type ExportFormat = 'md' | 'html';
 
 interface EditorToolbarProps {
   viewMode: ViewMode;
@@ -19,6 +21,7 @@ interface EditorToolbarProps {
   onSave: () => void;
   onToggleVersion: () => void;
   onToggleCollab: () => void;
+  onExport?: (format: ExportFormat) => void;
   saveStatus: 'idle' | 'saving' | 'saved';
   versionPanelOpen?: boolean;
   collabPanelOpen?: boolean;
@@ -32,6 +35,7 @@ export default function EditorToolbar({
   onSave,
   onToggleVersion,
   onToggleCollab,
+  onExport,
   saveStatus,
   versionPanelOpen = false,
   collabPanelOpen = false,
@@ -55,6 +59,43 @@ export default function EditorToolbar({
         )}
         <span>{saveStatus === 'saved' ? '已保存' : '保存'}</span>
       </button>
+
+      {/* Export Dropdown */}
+      {onExport && (
+        <div className="relative group">
+          <button
+            className="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-sm transition-colors
+                       text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+            title="导出"
+            aria-label="导出"
+          >
+            <Download className="w-4 h-4" />
+            <span>导出</span>
+          </button>
+          <div
+            className="absolute right-0 mt-1 w-40 bg-white dark:bg-slate-800 border border-slate-200
+                       dark:border-slate-700 rounded-lg shadow-lg py-1 z-10
+                       opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all"
+          >
+            <button
+              onClick={() => onExport('md')}
+              className="w-full flex items-center px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200
+                         hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <span className="mr-2 text-slate-400">.md</span>
+              <span>Markdown 原文</span>
+            </button>
+            <button
+              onClick={() => onExport('html')}
+              className="w-full flex items-center px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200
+                         hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <span className="mr-2 text-slate-400">.html</span>
+              <span>渲染后的 HTML</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Version Panel Toggle */}
       <button

@@ -13,7 +13,7 @@ import {
   Settings,
   LogOut,
   FileText,
-  RefreshCw
+  RefreshCw,
 } from 'lucide-react';
 import { User } from 'lucide-react';
 
@@ -25,6 +25,7 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewFileModal, setShowNewFileModal] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   // Fetch user data on mount if authenticated but no user data
   useEffect(() => {
@@ -50,6 +51,26 @@ export default function DashboardPage() {
     },
   });
 
+  const renameFileMutation = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      fileApi.renameFile(id, name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fileTree'] });
+      setRenameError(null);
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '重命名失败';
+      setRenameError(msg);
+      setTimeout(() => setRenameError(null), 3000);
+    },
+  });
+
+  const handleRename = (id: number, newName: string) => {
+    renameFileMutation.mutate({ id, name: newName });
+  };
+
   const handleCreateFile = (isFolder: boolean) => {
     if (!newFileName.trim()) return;
     createFileMutation.mutate({
@@ -72,6 +93,13 @@ export default function DashboardPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
+      {/* 重命名错误提示 */}
+      {renameError && (
+        <div className="fixed top-4 right-4 z-50 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-2 rounded-lg shadow-md text-sm">
+          {renameError}
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -165,6 +193,7 @@ export default function DashboardPage() {
               <FileTree
                 items={fileTree || []}
                 onFileClick={handleFileClick}
+                onRename={handleRename}
                 searchQuery={searchQuery}
               />
             )}
