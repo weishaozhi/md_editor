@@ -35,11 +35,22 @@ export default function VersionPanel({
     },
   });
 
+  /**
+   * 把后端返回的 created_at 渲染成本地时区字符串。
+   * 后端存的是 `datetime.utcnow()` (无 tz) → pydantic 序列化不带 Z → 前端
+   * `new Date("2026-07-28T22:50:13")` 会按 **浏览器本地时区** 解析，导致显示漂移
+   * （例如后端 22:50 UTC，前端 +8 时区看到次日 06:50）。
+   * 修复: 把无 tz 的字符串当成 UTC，强制按 'Asia/Shanghai' (GMT+8) 输出。
+   */
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    if (!dateStr) return '';
+    const hasTz = /[zZ]|[\+\-]\d{2}:?\d{2}$/.test(dateStr);
+    const iso = hasTz ? dateStr : `${dateStr}Z`;
+    const date = new Date(iso);
     return date.toLocaleString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
+      timeZone: 'Asia/Shanghai',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
     });

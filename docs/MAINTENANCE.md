@@ -14,6 +14,7 @@
 6. [已知问题和限制](#6-已知问题和限制)
 7. [文件清单](#7-文件清单)
 8. [版本面板 X 无响应 + 对比分屏 Overlay](#8-版本面板-x-无响应--对比分屏-overlay)
+9. [版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复](#9-版本时间显示错误--对比-overlay-滚动预览区定位修复)
 
 ---
 
@@ -677,3 +678,121 @@ function buildAddedRows(changes) {
 **新增：**
 - `frontend/src/components/Version/CompareOverlay.tsx` — 全屏分屏对比 overlay
 - `backend/test_compare_overlay_logic.py` — diff 行号不越界验证脚本
+
+---
+
+## 9. 版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复
+
+### 9.1 问题描述
+
+进入版本对比 / 查看版本列表时遇到两个交互 bug：
+
+1. **版本时间显示不正确**：所有版本 `created_at` 都按"系统本地时区"解析显示，导致与实际保存时间漂移（UTC+8 时区下被错误解析后看起来比真实时间多/少 8 小时）。
+2. **版本对比 overlay 进入后无法滑轮下滑，行数过多时预览界面没有显示**：在 CompareOverlay 中滚动 Monaco 编辑器滚轮时无响应；文档很长时预览区被挤到视口外，用户看不到预览内容。
+
+### 9.2 根本原因
+
+#### 9.2.1 时间时区错位
+
+后端 models（`backend/app/models/file.py` 等）使用 `default=datetime.utcnow` 写入 naive UTC 时间，pydantic `from_attributes` 序列化时也输出**无 tz 后缀**的 ISO 字符串（如 `"2026-07-28T22:50:13.123456"`）。
+
+前端 `VersionPanel.tsx` 的 `formatDate(dateStr)` 直接 `new Date(dateStr)` 解析不带 tz 的字符串，**JS 引擎按浏览器本地时区解释**：
+- 后端 22:50 UTC → 中国用户看到次日 06:50（漂 +8h）
+- 真正的"北京时间"用户则需要后端字段带 `+08:00` 才能正确显示
+
+后端 schema 没显式标注 `tzinfo`，前端无从区分"naive UTC"和"naive 本地时间"。
+
+#### 9.2.2 overlay 滚动 / 预览区定位
+
+- **滚动无效**：`CompareOverlay.tsx` 中 Monorepo 把 `<Editor onChange={() => onEditorScroll()} />` 当作滚动事件 — 但 `@monaco-editor/react` 的 `onChange` 是**内容变更回调**，不是滚动事件；Monaco 真正的滚动 API 是 `editor.onDidScrollChange()`。结果：用户在 Monaco 上滚滚轮，对侧 Editor + 两侧 Preview 都不会同步。
+- **预览被挤出视口**：每个 Column 用 `grid-rows-2`（50/50）分屏，预览区在长文档下被推到视口下方且**自身不会自动定位到屏幕中**；外层用 `overflow-hidden` 截断了整体滚动，使得用户无法通过整页滚动"找回"预览。
+
+### 9.3 解决方案
+
+#### 9.3.1 `frontend/src/components/Version/VersionPanel.tsx` — formatDate UTC 兜底 + Asia/Shanghai 渲染
+
+```ts
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const hasTz = /[zZ]|[\+\-]\d{2}:?\d{2}$/.test(dateStr);
+  const iso = hasTz ? dateStr : `${dateStr}Z`;
+  const date = new Date(iso);
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',   // 显式锁定北京时间
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+```
+
+要点：
+- 用正则检测 `Z` / `+08:00` / `-08:00` 后缀；naive 字符串补 `'Z'` 当作 UTC 解析
+- `timeZone: 'Asia/Shanghai'` 显式锁定输出时区，避免跟随浏览器
+
+#### 9.3.2 `frontend/src/components/Version/CompareOverlay.tsx` — Monaco 真正滚动监听 + 预览固定 40vh
+
+1. **滚动事件修复**：把 `<Editor onChange={...} />` 改为在 `onMount` 中注册 `editor.onDidScrollChange(() => onEditorScroll())`。
+2. **同步滚动增强**：`syncEditorScroll` 不再只是 `setScrollTop(top)` 一刀切，改为按比例同步：
+   ```ts
+   const ratio = Math.max(0, Math.min(1, scrollTop / (scrollHeight - clientHeight)));
+   if (srcPreview) srcPreview.scrollTop = srcPreview.scrollHeight - srcPreview.clientHeight * ratio;
+   if (dstPreview) dstPreview.scrollTop = ...;
+   ```
+   Editor 滚 → 对侧 Editor 同步 + 两侧 Preview 按比例跟随。
+3. **布局重构**：Column 内层用 `flex-col`（非 grid-rows-2）：
+   - Editor 父容器 `min-h-0 overflow-hidden`，让 Monaco 内部独立滚（不被外层撑爆）
+   - Preview 容器 `h-[40vh] min-h-[200px] max-h-[50vh] overflow-y-auto` — 固定 40% 屏高 + 上下限，永远在屏幕中可见且独立滚
+   - 外层 body `flex-1 grid grid-cols-2 overflow-hidden min-h-0` — 锁住整体不溢出
+4. **清理**：删除不再使用的 `leftScrollRef` / `rightScrollRef`（之前是给 onChange 误用准备的容器 ref，现在直接走 Monaco 滚动事件）
+
+### 9.4 关键设计点
+
+- **不要把 `<Editor>` 的 `onChange` 当滚动事件**：它是内容变更回调，真正的滚动 API 是 `editor.onDidScrollChange()`。
+- **grid/flex 子元素加 `min-h-0`**：默认 `min-height: auto` 会让子元素按内容撑高，导致 flex/grid 父容器溢出；这是"Monaco 把整列撑爆"的根因。
+- **预览区用 `vh` 单位**而不是 fr：分屏对比里预览区必须有**绝对屏幕高度**而不是 flex 比例，否则长文档下会被 Monaco 挤掉。
+
+### 9.5 测试验证
+
+#### 9.5.1 formatDate 时区逻辑
+
+`backend/test_format_date_logic.py` 5 个场景：
+
+| 输入 | 期望 |
+|---|---|
+| `2026-07-28T22:50:13.123456` (naive UTC) | `07/29 06:50` |
+| `2026-07-28T22:50:13Z` | `07/29 06:50` |
+| `2026-07-28T22:50:13+08:00` | `07/28 22:50` |
+| `2026-07-28T22:50:13-08:00` | `07/29 14:50` |
+| `""` | `""` |
+
+5/5 通过 ✅
+
+#### 9.5.2 overlay diff 行号不越界（回归）
+
+`backend/test_compare_overlay_logic.py` 4 个场景全部通过，行号均在文件范围内 ✅
+
+#### 9.5.3 TypeScript
+
+`npx tsc --noEmit` — 改动文件 `CompareOverlay.tsx` / `VersionPanel.tsx` 错误数：0 ✅（仅历史遗留的 5 个 `noUnusedLocals` 警告，与本次无关）
+
+#### 9.5.4 Vite 编译产物
+
+通过 `http://localhost:5174/src/...tsx` 拉取浏览器实际服务的产物：
+- `CompareOverlay.tsx`：含 `onDidScrollChange`、`40vh`、`min-h-0` ✅
+- `VersionPanel.tsx`：含 `Asia/Shanghai`、`hasTz`、`formatDate` ✅
+
+#### 9.5.5 后端 + 前端 dev server
+
+- 后端 `GET /health` 200 ✅
+- 前端 `GET /` (5174) 200 ✅
+
+### 9.6 涉及文件清单
+
+**修改：**
+- `frontend/src/components/Version/VersionPanel.tsx` — formatDate UTC 兜底 + Asia/Shanghai 锁定
+- `frontend/src/components/Version/CompareOverlay.tsx` — Monaco onDidScrollChange 真正滚动监听；布局改为 Editor 自适应 + Preview 固定 40vh；按比例同步滚动；清理无用 ref
+
+**新增：**
+- `backend/test_format_date_logic.py` — 时区解析逻辑 5 场景验证脚本

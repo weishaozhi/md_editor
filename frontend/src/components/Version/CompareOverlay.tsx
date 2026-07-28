@@ -84,8 +84,6 @@ export default function CompareOverlay({
   currentContent,
   onClose,
 }: CompareOverlayProps) {
-  const leftScrollRef = useRef<HTMLDivElement>(null);
-  const rightScrollRef = useRef<HTMLDivElement>(null);
   const leftPreviewRef = useRef<HTMLDivElement>(null);
   const rightPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -182,14 +180,30 @@ export default function CompareOverlay({
     }
   };
 
-  // 同步滚动：editor 与 preview 分两组（左右各一组），但不互相干扰
+  // 同步滚动: Editor 滚动 → 对侧 Editor 同步 + 两侧 Preview 按比例跟随
+  // 用户在 Editor 上滚滚轮时, 同/对侧 Preview 都按滚动比例跟随
   const syncEditorScroll = (source: 'left' | 'right') => {
-    if (source === 'left' && leftEditorRef.current && rightEditorRef.current) {
-      const top = leftEditorRef.current.getScrollTop();
-      rightEditorRef.current.setScrollTop(top);
-    } else if (source === 'right' && leftEditorRef.current && rightEditorRef.current) {
-      const top = rightEditorRef.current.getScrollTop();
-      leftEditorRef.current.setScrollTop(top);
+    const srcEditor = source === 'left' ? leftEditorRef.current : rightEditorRef.current;
+    const dstEditor = source === 'left' ? rightEditorRef.current : leftEditorRef.current;
+    const srcPreview = source === 'left' ? leftPreviewRef.current : rightPreviewRef.current;
+    const dstPreview = source === 'left' ? rightPreviewRef.current : leftPreviewRef.current;
+    if (!srcEditor) return;
+    const scrollTop = srcEditor.getScrollTop();
+    const scrollHeight = srcEditor.getScrollHeight();
+    const clientHeight = srcEditor.getLayoutInfo().height;
+    if (dstEditor) dstEditor.setScrollTop(scrollTop);
+    // Editor 滚动比例 → Preview 滚动位置
+    if (scrollHeight > clientHeight) {
+      const maxSrc = scrollHeight - clientHeight;
+      const ratio = Math.max(0, Math.min(1, scrollTop / maxSrc));
+      if (srcPreview) {
+        const maxSelf = srcPreview.scrollHeight - srcPreview.clientHeight;
+        srcPreview.scrollTop = maxSelf * ratio;
+      }
+      if (dstPreview) {
+        const maxDst = dstPreview.scrollHeight - dstPreview.clientHeight;
+        dstPreview.scrollTop = maxDst * ratio;
+      }
     }
   };
 
@@ -231,12 +245,11 @@ export default function CompareOverlay({
       </header>
 
       {/* Body: 双列 */}
-      <div className="flex-1 grid grid-cols-2 gap-px bg-slate-700 overflow-hidden">
+      <div className="flex-1 grid grid-cols-2 gap-px bg-slate-700 overflow-hidden min-h-0">
         <Column
           title={`v${historyVersion.version_num}（历史）`}
           content={historyVersion.content}
           previewRef={leftPreviewRef}
-          editorRef={leftScrollRef}
           onEditorMount={handleEditorMount('left')}
           onEditorScroll={() => syncEditorScroll('left')}
           onPreviewScroll={() => syncPreviewScroll('left')}
@@ -245,7 +258,6 @@ export default function CompareOverlay({
           title="当前内容"
           content={currentVersionMeta.content}
           previewRef={rightPreviewRef}
-          editorRef={rightScrollRef}
           onEditorMount={handleEditorMount('right')}
           onEditorScroll={() => syncEditorScroll('right')}
           onPreviewScroll={() => syncPreviewScroll('right')}
@@ -277,7 +289,6 @@ interface ColumnProps {
   title: string;
   content: string;
   previewRef: React.RefObject<HTMLDivElement>;
-  editorRef: React.RefObject<HTMLDivElement>;
   onEditorMount: OnMount;
   onEditorScroll: () => void;
   onPreviewScroll: () => void;
@@ -287,45 +298,47 @@ function Column({
   title,
   content,
   previewRef,
-  editorRef,
   onEditorMount,
   onEditorScroll,
   onPreviewScroll,
 }: ColumnProps) {
   return (
-    <div className="bg-slate-50 dark:bg-slate-900 flex flex-col">
+    <div className="bg-slate-50 dark:bg-slate-900 flex flex-col min-h-0 overflow-hidden">
       <div className="px-3 py-1.5 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300">
         {title}
       </div>
-      <div className="flex-1 grid grid-rows-2 overflow-hidden">
-        <div ref={editorRef} className="overflow-hidden border-b border-slate-200 dark:border-slate-700">
-          <Editor
-            height="100%"
-            defaultLanguage="markdown"
-            value={content}
-            onMount={onEditorMount}
-            onChange={() => onEditorScroll()}
-            theme="vs-dark"
-            options={{
-              readOnly: true,
-              minimap: { enabled: false },
-              fontSize: 13,
-              wordWrap: 'on',
-              lineNumbers: 'on',
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              domReadOnly: true,
-              renderWhitespace: 'none',
-            }}
-          />
-        </div>
-        <div
-          ref={previewRef}
-          onScroll={onPreviewScroll}
-          className="overflow-y-auto p-3 bg-white dark:bg-slate-900 text-sm"
-        >
-          <MarkdownPreview content={content} />
-        </div>
+      {/* 上半部: Editor 占剩余空间, 内部独立滚动 */}
+      <div className="min-h-0 overflow-hidden border-b border-slate-200 dark:border-slate-700">
+        <Editor
+          height="100%"
+          defaultLanguage="markdown"
+          value={content}
+          onMount={(editor, monaco) => {
+            onEditorMount(editor, monaco);
+            // 真正监听 Monaco 滚轮 → 触发 left/right Editor 同步滚动 + 让 Preview 跟随
+            editor.onDidScrollChange(() => onEditorScroll());
+          }}
+          theme="vs-dark"
+          options={{
+            readOnly: true,
+            minimap: { enabled: false },
+            fontSize: 13,
+            wordWrap: 'on',
+            lineNumbers: 'on',
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            domReadOnly: true,
+            renderWhitespace: 'none',
+          }}
+        />
+      </div>
+      {/* 下半部: Preview 固定 40% 屏高, 始终在屏幕中可见, 内部独立滚动 */}
+      <div
+        ref={previewRef}
+        onScroll={onPreviewScroll}
+        className="h-[40vh] min-h-[200px] max-h-[50vh] overflow-y-auto p-3 bg-white dark:bg-slate-900 text-sm"
+      >
+        <MarkdownPreview content={content} />
       </div>
     </div>
   );
