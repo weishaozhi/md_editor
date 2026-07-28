@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/* Markdown Preview Styles */
+.markdown-preview {
+  @apply prose prose-slate dark:prose-invert max-w-none;
+}
+
+.markdown-preview h1 {
+  @apply text-3xl font-bold mb-4 mt-6 pb-2 border-b;
+}
+
+.markdown-preview h2 {
+  @apply text-2xl font-bold mb-3 mt-5 pb-1 border-b;
+}
+
+.markdown-preview h3 {
+  @apply text-xl font-semibold mb-2 mt-4;
+}
+
+.markdown-preview code {
+  @apply bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-sm font-mono;
+}
+
+.markdown-preview pre {
+  @apply bg-slate-100 dark:bg-slate-800 p-4 rounded-lg overflow-x-auto;
+}
+
+.markdown-preview pre code {
+  @apply bg-transparent p-0;
+}
+
+.markdown-preview blockquote {
+  @apply border-l-4 border-primary-500 pl-4 italic my-4;
+}
+
+.markdown-preview table {
+  @apply w-full border-collapse my-4;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  @apply border border-slate-300 dark:border-slate-600 px-3 py-2;
+}
+
+.markdown-preview th {
+  @apply bg-slate-100 dark:bg-slate-800 font-semibold;
+}
+
+/* Editor Styles */
+.editor-container {
+  @apply flex h-full;
+}
+
+.editor-sidebar {
+  @apply w-64 border-r bg-slate-50 dark:bg-slate-900 flex flex-col;
+}
+
+.editor-main {
+  @apply flex-1 flex flex-col overflow-hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100 dark:bg-slate-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-600 rounded;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-500;
+}
