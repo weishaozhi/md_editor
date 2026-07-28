@@ -690,6 +690,8 @@ function buildAddedRows(changes) {
 1. **版本时间显示不正确**：所有版本 `created_at` 都按"系统本地时区"解析显示，导致与实际保存时间漂移（UTC+8 时区下被错误解析后看起来比真实时间多/少 8 小时）。
 2. **版本对比 overlay 进入后无法滑轮下滑，行数过多时预览界面没有显示**：在 CompareOverlay 中滚动 Monaco 编辑器滚轮时无响应；文档很长时预览区被挤到视口外，用户看不到预览内容。
 
+> **回归 bug（已在 9.3.4 修复）**：上一轮把布局从 `grid-rows-2` 50/50 改为 `flex-col` + Preview 固定 40vh 后，**Editor 父 div 漏掉了 `flex-1`**，导致 Column 内 Monaco 容器高度 = 内容自然高度 = 0，**代码栏消失只剩预览栏**。修复 = 给 Editor 父 div 加 `flex-1 min-h-0 overflow-hidden`。
+
 ### 9.2 根本原因
 
 #### 9.2.1 时间时区错位
@@ -742,7 +744,7 @@ const formatDate = (dateStr: string) => {
    ```
    Editor 滚 → 对侧 Editor 同步 + 两侧 Preview 按比例跟随。
 3. **布局重构**：Column 内层用 `flex-col`（非 grid-rows-2）：
-   - Editor 父容器 `min-h-0 overflow-hidden`，让 Monaco 内部独立滚（不被外层撑爆）
+   - Editor 父容器 **`flex-1 min-h-0 overflow-hidden`** — `flex-1` 是必须的，让 Monaco 容器主动占满 Preview 之外的剩余空间；否则 flex column 默认按内容自然高度布局，空内容时容器高度 = 0
    - Preview 容器 `h-[40vh] min-h-[200px] max-h-[50vh] overflow-y-auto` — 固定 40% 屏高 + 上下限，永远在屏幕中可见且独立滚
    - 外层 body `flex-1 grid grid-cols-2 overflow-hidden min-h-0` — 锁住整体不溢出
 4. **清理**：删除不再使用的 `leftScrollRef` / `rightScrollRef`（之前是给 onChange 误用准备的容器 ref，现在直接走 Monaco 滚动事件）
@@ -752,6 +754,7 @@ const formatDate = (dateStr: string) => {
 - **不要把 `<Editor>` 的 `onChange` 当滚动事件**：它是内容变更回调，真正的滚动 API 是 `editor.onDidScrollChange()`。
 - **grid/flex 子元素加 `min-h-0`**：默认 `min-height: auto` 会让子元素按内容撑高，导致 flex/grid 父容器溢出；这是"Monaco 把整列撑爆"的根因。
 - **预览区用 `vh` 单位**而不是 fr：分屏对比里预览区必须有**绝对屏幕高度**而不是 flex 比例，否则长文档下会被 Monaco 挤掉。
+- **`flex flex-col` 中"占剩余空间"的子元素必须显式 `flex-1`**：默认 `flex-basis: auto` 让子元素按内容自然高度布局（空内容时 = 0），剩余空间不会自动分配。这是本次回归 bug 的根因 — Editor 父 div 漏 `flex-1` 导致代码栏高度为 0。
 
 ### 9.5 测试验证
 

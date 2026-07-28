@@ -308,7 +308,7 @@ function Column({
         {title}
       </div>
       {/* 上半部: Editor 占剩余空间, 内部独立滚动 */}
-      <div className="min-h-0 overflow-hidden border-b border-slate-200 dark:border-slate-700">
+      <div className="flex-1 min-h-0 overflow-hidden border-b border-slate-200 dark:border-slate-700">
         <Editor
           height="100%"
           defaultLanguage="markdown"
