@@ -41,4 +41,13 @@ npm run dev
 
 ## API 文档
 
-启动服务后访问 http://localhost:8000/docs 查看完整 API 文档
+启动服务后访问 http://localhost:8000/docs 查看完整 API 文档，契约详见 [`docs/API.md`](docs/API.md)。
+
+## 项目规划与规范
+
+- 入口与原则：[`docs/project/project-bootstrap.md`](docs/project/project-bootstrap.md)
+- 产品需求：[`docs/project/prd.md`](docs/project/prd.md)
+- 架构说明：[`docs/project/arch.md`](docs/project/arch.md)
+- 项目状态 / 已知问题：[`docs/project/project_state.md`](docs/project/project_state.md)
+- 测试规范：[`docs/project/test.md`](docs/project/test.md)
+- Git 使用规范：[`docs/project/git-usage.md`](docs/project/git-usage.md)
