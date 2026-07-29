@@ -10,6 +10,8 @@ import {
   Pencil,
   Check,
   X as XIcon,
+  Trash2,
+  FolderInput,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -17,31 +19,37 @@ interface FileTreeProps {
   items: FileTreeItem[];
   onFileClick: (file: { id: number; is_folder: boolean }) => void;
   onRename?: (id: number, newName: string) => void;
+  onDelete?: (id: number) => void;
+  onMove?: (id: number, currentParentId: number | null) => void;
+  onDragStart?: (id: number, isFolder: boolean) => void;
+  onDragEnd?: (id: number) => void;
+  draggedItemId?: number | null | undefined;
   searchQuery?: string;
-  level?: number;
 }
 
 interface RowProps {
   item: FileTreeItem;
-  level: number;
   isEditing: boolean;
   isHovered: boolean;
   editValue: string;
+  draggedItemId: number | null | undefined;
   onFileClick: (file: { id: number; is_folder: boolean }) => void;
   onRename?: (id: number, newName: string) => void;
   onStartEdit: (id: number, currentName: string) => void;
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onChangeValue: (v: string) => void;
-  onContextMenu?: (e: React.MouseEvent, item: FileTreeItem) => void;
+  onContextMenu?: (e: React.MouseEvent, id: number, isFolder: boolean, name: string) => void;
+  onDragStart?: (id: number, isFolder: boolean) => void;
+  onDragEnd?: (id: number) => void;
 }
 
 function Row({
   item,
-  level,
   isEditing,
   isHovered,
   editValue,
+  draggedItemId,
   onFileClick,
   onRename,
   onStartEdit,
@@ -49,9 +57,12 @@ function Row({
   onCancelEdit,
   onChangeValue,
   onContextMenu,
+  onDragStart,
+  onDragEnd,
 }: RowProps) {
   const { toggleFolder, isFolderExpanded } = useFileStore();
   const inputRef = useRef<HTMLInputElement>(null);
+  const isDragging = draggedItemId === item.id;
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -60,14 +71,27 @@ function Row({
     }
   }, [isEditing]);
 
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ id: item.id, isFolder: item.is_folder }));
+    e.dataTransfer.effectAllowed = 'move';
+    onDragStart?.(item.id, item.is_folder);
+  };
+
+  const handleDragEnd = () => {
+    onDragEnd?.(item.id);
+  };
+
   return (
     <div
       className={clsx(
         'group flex items-center space-x-2 px-2 py-1.5 rounded-lg transition-colors',
         isHovered && !isEditing ? 'bg-slate-100 dark:bg-slate-700' : 'hover:bg-slate-100 dark:hover:bg-slate-700',
-        level > 0 && 'ml-4'
+        isDragging && 'opacity-50'
       )}
-      onContextMenu={(e) => onContextMenu?.(e, item)}
+      onContextMenu={(e) => onContextMenu?.(e, item.id, item.is_folder, item.name)}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
     >
       {/* Folder chevron OR spacer */}
       {item.is_folder ? (
@@ -144,14 +168,14 @@ function Row({
               onFileClick({ id: item.id, is_folder: item.is_folder });
             }
           }}
-          title="右键或点击右侧铅笔图标重命名"
+          title="右键或点击铅笔图标重命名"
         >
           {item.name}
         </span>
       )}
 
-      {/* Hover 铅笔按钮 (非 folder, 非 editing) */}
-      {!item.is_folder && !isEditing && onRename && (
+      {/* Hover 铅笔按钮 */}
+      {!isEditing && onRename && (
         <button
           onClick={() => onStartEdit(item.id, item.name)}
           className={clsx(
@@ -168,21 +192,29 @@ function Row({
   );
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  id: number;
+  isFolder: boolean;
+  name: string;
+}
+
 export default function FileTree({
   items,
   onFileClick,
   onRename,
+  onDelete,
+  onMove,
+  onDragStart,
+  onDragEnd,
+  draggedItemId,
   searchQuery = '',
-  level = 0,
 }: FileTreeProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    item: FileTreeItem;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const filteredItems = searchQuery
     ? items.filter((item) =>
@@ -212,13 +244,15 @@ export default function FileTree({
     setEditValue('');
   };
 
-  const handleContextMenu = (e: React.MouseEvent, item: FileTreeItem) => {
-    if (item.is_folder) return; // 只给文件加重命名（文件夹本版本不重命名）
+  const handleContextMenu = (e: React.MouseEvent, id: number, isFolder: boolean, name: string) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, item });
+    setContextMenu({ x: e.clientX, y: e.clientY, id, isFolder, name });
   };
 
-  // 点击其他位置关闭右键菜单
+  const handleInternalDragEnd = (id: number) => {
+    onDragEnd?.(id);
+  };
+
   useEffect(() => {
     if (!contextMenu) return;
     const handler = () => setContextMenu(null);
@@ -236,10 +270,10 @@ export default function FileTree({
         >
           <Row
             item={item}
-            level={level}
             isEditing={editingId === item.id}
             isHovered={hoveredId === item.id}
             editValue={editValue}
+            draggedItemId={draggedItemId}
             onFileClick={onFileClick}
             onRename={onRename}
             onStartEdit={startEdit}
@@ -247,6 +281,8 @@ export default function FileTree({
             onCancelEdit={cancelEdit}
             onChangeValue={setEditValue}
             onContextMenu={handleContextMenu}
+            onDragStart={onDragStart}
+            onDragEnd={handleInternalDragEnd}
           />
 
           {item.is_folder && item.children.length > 0 && (
@@ -254,8 +290,12 @@ export default function FileTree({
               items={item.children}
               onFileClick={onFileClick}
               onRename={onRename}
+              onDelete={onDelete}
+              onMove={onMove}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              draggedItemId={draggedItemId}
               searchQuery={searchQuery}
-              level={level + 1}
             />
           )}
         </div>
@@ -265,22 +305,82 @@ export default function FileTree({
       {contextMenu && (
         <div
           className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
-                     rounded-lg shadow-lg py-1 min-w-[140px]"
+                     rounded-lg shadow-lg py-1 min-w-[160px]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={() => startEdit(contextMenu.item.id, contextMenu.item.name)}
-            disabled={!onRename}
-            className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm
-                       text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700
-                       disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span>重命名</span>
-          </button>
+          {!contextMenu.isFolder && (
+            <button
+              onClick={() => {
+                if (contextMenu) {
+                  onFileClick({ id: contextMenu.id, is_folder: false });
+                  setContextMenu(null);
+                }
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm
+                         text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>打开</span>
+            </button>
+          )}
+
+          {onRename && (
+            <button
+              onClick={() => startEdit(contextMenu.id, contextMenu.name)}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm
+                         text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span>重命名</span>
+            </button>
+          )}
+
+          {onMove && (
+            <button
+              onClick={() => {
+                const item = findItemById(items, contextMenu.id);
+                const parentId = item?.parent_id ?? null;
+                onMove(contextMenu.id, parentId);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm
+                         text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              <FolderInput className="w-3.5 h-3.5" />
+              <span>移动到...</span>
+            </button>
+          )}
+
+          {onDelete && (
+            <>
+              <div className="border-t border-slate-200 dark:border-slate-700 my-1" />
+              <button
+                onClick={() => {
+                  onDelete(contextMenu.id);
+                  setContextMenu(null);
+                }}
+                className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm
+                           text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>删除</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function findItemById(items: FileTreeItem[], id: number): FileTreeItem | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.children.length > 0) {
+      const found = findItemById(item.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
 }

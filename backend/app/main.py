@@ -5,7 +5,7 @@ import traceback
 
 from app.config import settings
 from app.database import init_db
-from app.api import files_router, auth_router, versions_router, plugins_router, collab_router, export_router
+from app.api import files_router, auth_router, versions_router, plugins_router, collab_router, export_router, trash_router
 from app.api.websocket import router as ws_router
 import logging
 
@@ -41,6 +41,7 @@ app.include_router(versions_router, prefix=settings.API_PREFIX)
 app.include_router(plugins_router, prefix=settings.API_PREFIX)
 app.include_router(collab_router, prefix=settings.API_PREFIX)
 app.include_router(export_router, prefix=settings.API_PREFIX)
+app.include_router(trash_router, prefix=settings.API_PREFIX)
 app.include_router(ws_router)
 
 

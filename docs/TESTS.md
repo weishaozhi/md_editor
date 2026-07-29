@@ -19,10 +19,13 @@ backend/test/
 │   └── test_format_date_logic.py
 ├── 04_editor_sync/                # 编辑器 ↔ 预览同步滚动
 │   └── test_sync_scroll_ratio.py
-└── 05_export_rename/              # 导出 / 重命名 / 版本评论（3 个新功能 E2E）
+├── 05_export_rename/             # 导出 / 重命名 / 版本评论（3 个新功能 E2E）
 │   └── test_rename_export_version_comment.py
-└── 06_stop_bat_test/               # stop.bat 终点终止验证（防止误杀）
-    └── test_stop_bat.py
+├── 06_stop_bat_test/              # stop.bat 终点终止验证（防止误杀）
+│   └── test_stop_bat.py
+└── 07_trash/                      # 垃圾桶功能测试
+    ├── test_trash_api.py
+    └── test_report.md
 ```
 
 ---
@@ -153,6 +156,23 @@ backend/test/
 
 ---
 
+## 7. `07_trash/` — 垃圾桶功能测试
+
+### `test_trash_api.py`
+
+| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP 测试 |
+| **目标接口** | `/api/files/{id}` (DELETE 软删除), `/api/trash` (GET), `/api/trash/{id}/restore` (POST), `/api/trash/{id}` (DELETE 永久删除), `/api/trash/empty` (DELETE 清空), `/api/trash/settings` (GET/PUT) |
+| **前置** | 后端已启动（`http://localhost:8000`），需重启以加载新路由 |
+| **覆盖场景** | 创建文件/文件夹、软删除、获取垃圾桶列表、恢复文件、永久删除、垃圾桶设置、清空垃圾桶 |
+| **解决的问题** | 垃圾桶功能实现后的验证测试 |
+| **运行** | `python backend/test/07_trash/test_trash_api.py` |
+| **退出码** | 0 = 全部通过；1 = 有失败用例 |
+| **注意事项** | 后端服务需要重启才能加载 `/trash` 路由 |
+
+---
+
 ## 使用约定
 
 ### BASE URL
@@ -207,5 +227,6 @@ python backend/test/05_export_rename/test_rename_export_version_comment.py
 | `03_version_ui/test_format_date_logic.py` | 章节 9 —— 时区格式化与排序 |
 | `04_editor_sync/test_sync_scroll_ratio.py` | 章节 10 —— 同步滚动比例公式 |
 | `05_export_rename/test_rename_export_version_comment.py` | 章节 12 —— 3 个新功能 E2E（重命名 / 导出 / 版本评论） |
+| `07_trash/test_trash_api.py` | 垃圾桶功能（软删除、恢复、永久删除、设置） |
 
 完整的问题描述、根因、修复方案见 [`docs/MAINTENANCE.md`](./MAINTENANCE.md)。

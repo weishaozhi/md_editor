@@ -18,10 +18,9 @@ export default function MarkdownPreview({ content }: MarkdownPreviewProps) {
             const inline = !match;
             return !inline && match ? (
               <SyntaxHighlighter
-                style={vscDarkPlus}
+                style={vscDarkPlus as { [key: string]: React.CSSProperties }}
                 language={match[1]}
                 PreTag="div"
-                {...props}
               >
                 {String(children).replace(/\n$/, '')}
               </SyntaxHighlighter>

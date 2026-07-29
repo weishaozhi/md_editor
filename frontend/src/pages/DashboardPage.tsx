@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fileApi } from '@/services/fileApi';
+import { trashApi } from '@/services/trashApi';
 import { authApi } from '@/services/authApi';
 import { useAuthStore } from '@/store/authStore';
-import { useFileStore } from '@/store/fileStore';
+import { useTrashStore } from '@/store/trashStore';
 import FileTree from '@/components/FileTree/FileTree';
+import TrashDropZone from '@/components/TrashPanel';
+import MoveFileModal from '@/components/MoveFileModal';
 import {
   Plus,
   FolderPlus,
@@ -14,6 +17,7 @@ import {
   LogOut,
   FileText,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import { User } from 'lucide-react';
 
@@ -21,11 +25,32 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, setUser, logout, isAuthenticated } = useAuthStore();
-  const { setCurrentFile } = useFileStore();
+  const { setSettings } = useTrashStore();
   const [searchQuery, setSearchQuery] = useState('');
+
+  // File creation modal
   const [showNewFileModal, setShowNewFileModal] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+
+  // Folder creation modal
+  const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  // Move file modal
+  const [moveModal, setMoveModal] = useState<{
+    isOpen: boolean;
+    fileId: number;
+    fileName: string;
+    currentParentId: number | null;
+  }>({
+    isOpen: false,
+    fileId: 0,
+    fileName: '',
+    currentParentId: null,
+  });
+
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Fetch user data on mount if authenticated but no user data
   useEffect(() => {
@@ -42,12 +67,47 @@ export default function DashboardPage() {
     queryFn: fileApi.getTree,
   });
 
+  // Fetch trash settings on mount
+  const { data: trashSettings } = useQuery({
+    queryKey: ['trashSettings'],
+    queryFn: trashApi.getSettings,
+  });
+
+  useEffect(() => {
+    if (trashSettings) {
+      setSettings(trashSettings);
+    }
+  }, [trashSettings, setSettings]);
+
   const createFileMutation = useMutation({
     mutationFn: fileApi.createFile,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fileTree'] });
       setShowNewFileModal(false);
       setNewFileName('');
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '创建失败';
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 3000);
+    },
+  });
+
+  const createFolderMutation = useMutation({
+    mutationFn: fileApi.createFile,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fileTree'] });
+      setShowNewFolderModal(false);
+      setNewFolderName('');
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '创建失败';
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 3000);
     },
   });
 
@@ -67,16 +127,58 @@ export default function DashboardPage() {
     },
   });
 
+  const deleteFileMutation = useMutation({
+    mutationFn: fileApi.deleteFile,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fileTree'] });
+      queryClient.invalidateQueries({ queryKey: ['trash'] });
+      // 强制刷新 trash 查询，确保 TrashDropZone 立即显示更新
+      queryClient.refetchQueries({ queryKey: ['trash'] });
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '删除失败';
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 3000);
+    },
+  });
+
   const handleRename = (id: number, newName: string) => {
     renameFileMutation.mutate({ id, name: newName });
   };
 
-  const handleCreateFile = (isFolder: boolean) => {
+  const handleDelete = (id: number) => {
+    if (window.confirm('确定要删除吗？文件将移入垃圾桶。')) {
+      deleteFileMutation.mutate(id);
+    }
+  };
+
+  const handleMove = (fileId: number, currentParentId: number | null) => {
+    const item = findItemInTree(fileTree || [], fileId);
+    setMoveModal({
+      isOpen: true,
+      fileId,
+      fileName: item?.name || '',
+      currentParentId,
+    });
+  };
+
+  const handleCreateFile = () => {
     if (!newFileName.trim()) return;
     createFileMutation.mutate({
       name: newFileName,
-      is_folder: isFolder,
-      content: isFolder ? '' : '# 新文档\n\n开始编辑...',
+      is_folder: false,
+      content: '# 新文档\n\n开始编辑...',
+    });
+  };
+
+  const handleCreateFolder = () => {
+    if (!newFolderName.trim()) return;
+    createFolderMutation.mutate({
+      name: newFolderName,
+      is_folder: true,
+      content: '',
     });
   };
 
@@ -93,10 +195,10 @@ export default function DashboardPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900">
-      {/* 重命名错误提示 */}
-      {renameError && (
+      {/* 错误提示 */}
+      {(renameError || actionError) && (
         <div className="fixed top-4 right-4 z-50 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-2 rounded-lg shadow-md text-sm">
-          {renameError}
+          {renameError || actionError}
         </div>
       )}
 
@@ -173,8 +275,8 @@ export default function DashboardPage() {
               </button>
               <button
                 onClick={() => {
-                  setNewFileName('');
-                  setShowNewFileModal(true);
+                  setNewFolderName('');
+                  setShowNewFolderModal(true);
                 }}
                 className="flex-1 flex items-center justify-center space-x-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 py-2 px-3 rounded-lg text-sm transition-colors"
               >
@@ -184,6 +286,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* File Tree */}
           <div className="flex-1 overflow-y-auto p-2">
             {isLoading ? (
               <div className="flex items-center justify-center h-32">
@@ -194,10 +297,19 @@ export default function DashboardPage() {
                 items={fileTree || []}
                 onFileClick={handleFileClick}
                 onRename={handleRename}
+                onDelete={handleDelete}
+                onMove={handleMove}
                 searchQuery={searchQuery}
               />
             )}
           </div>
+
+          {/* Trash Panel */}
+          <TrashDropZone
+            onDrop={(id) => {
+              deleteFileMutation.mutate(id);
+            }}
+          />
         </aside>
 
         {/* Main Content */}
@@ -220,9 +332,17 @@ export default function DashboardPage() {
       {showNewFileModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-slate-800 rounded-xl p-6 w-96 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-800 dark:text-white mb-4">
-              创建新文件
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-800 dark:text-white">
+                创建新文件
+              </h3>
+              <button
+                onClick={() => setShowNewFileModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
             <input
               type="text"
               placeholder="输入文件名..."
@@ -232,36 +352,95 @@ export default function DashboardPage() {
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  const isFolder = (e.target as HTMLElement).dataset.isFolder === 'true';
-                  handleCreateFile(false);
+                  handleCreateFile();
                 }
               }}
             />
             <div className="flex space-x-3">
               <button
-                onClick={() => handleCreateFile(false)}
-                disabled={!newFileName.trim()}
+                onClick={handleCreateFile}
+                disabled={!newFileName.trim() || createFileMutation.isPending}
                 className="flex-1 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white py-2 rounded-lg transition-colors"
               >
-                创建文件
+                创建
               </button>
               <button
-                onClick={() => handleCreateFile(true)}
-                disabled={!newFileName.trim()}
-                className="flex-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-50 text-slate-700 dark:text-slate-200 py-2 rounded-lg transition-colors"
+                onClick={() => setShowNewFileModal(false)}
+                className="flex-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 py-2 rounded-lg transition-colors"
               >
-                创建文件夹
+                取消
               </button>
             </div>
-            <button
-              onClick={() => setShowNewFileModal(false)}
-              className="w-full mt-3 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 py-2"
-            >
-              取消
-            </button>
           </div>
         </div>
       )}
+
+      {/* New Folder Modal */}
+      {showNewFolderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 w-96 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-800 dark:text-white">
+                创建新文件夹
+              </h3>
+              <button
+                onClick={() => setShowNewFolderModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <input
+              type="text"
+              placeholder="输入文件夹名称..."
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-slate-700 dark:text-white mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleCreateFolder();
+                }
+              }}
+            />
+            <div className="flex space-x-3">
+              <button
+                onClick={handleCreateFolder}
+                disabled={!newFolderName.trim() || createFolderMutation.isPending}
+                className="flex-1 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white py-2 rounded-lg transition-colors"
+              >
+                创建
+              </button>
+              <button
+                onClick={() => setShowNewFolderModal(false)}
+                className="flex-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 py-2 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move File Modal */}
+      <MoveFileModal
+        isOpen={moveModal.isOpen}
+        onClose={() => setMoveModal({ ...moveModal, isOpen: false })}
+        fileId={moveModal.fileId}
+        fileName={moveModal.fileName}
+        currentParentId={moveModal.currentParentId}
+      />
     </div>
   );
+}
+
+function findItemInTree(items: any[], id: number): any | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.children?.length > 0) {
+      const found = findItemInTree(item.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
 }

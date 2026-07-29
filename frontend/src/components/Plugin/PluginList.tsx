@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/services/api';
 import { Plugin } from '@/types';
-import { Package, Plus, Trash2, Power, Settings, ExternalLink } from 'lucide-react';
+import { Package, Plus, Trash2, Power, Settings } from 'lucide-react';
 
 export default function PluginList() {
   const queryClient = useQueryClient();

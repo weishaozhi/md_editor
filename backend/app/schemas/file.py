@@ -49,6 +49,7 @@ class FileResponse(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+    deleted_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

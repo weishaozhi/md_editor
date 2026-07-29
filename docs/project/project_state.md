@@ -7,8 +7,10 @@
 
 ## 1. 当前阶段
 
-- **阶段**：核心功能内测；插件、协作等仍在补齐。
+- **阶段**：核心功能 + 文件管理增强（垃圾桶）功能完成
 - **最近的交付**（来自 `git log`）：
+  - `xxxxxx` feat(trash)：垃圾桶功能（软删除、恢复、永久删除、自动清理保留时间）
+  - `xxxxxx` feat(file)：文件移动到文件夹、文件夹重命名、分离文件/文件夹创建
   - `c46ff89` feat(file+version)：可重命名 / 导出文件 / 版本快照评论
   - `46e72d0` refactor(test)：7 个测试脚本按主题归档
   - `20e4c61` fix(editor)：Monaco 中文输入法按空格选词后内容跳末尾 + 拼音残留
@@ -101,6 +103,7 @@
 - Monaco IME 中文输入跳末尾 — § 11
 - Find Widget Esc 失效 — `MAINTENANCE.md` 索引
 - stop.bat 误杀进程 — `MAINTENANCE.md` § 13 / `06_stop_bat_test/`
+- **ISS-TRASH-001 垃圾桶功能数据库列缺失 + 路由顺序错误** — 见 `update/2026-07-29_16-22.md`
 
 ---
 

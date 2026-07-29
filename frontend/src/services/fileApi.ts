@@ -7,6 +7,8 @@ export const fileApi = {
   getFiles: (parentId?: number) =>
     api.get<FileItem[]>('/files', { params: { parent_id: parentId } }).then(res => res.data),
 
+  getFolders: () => api.get<FileItem[]>('/files/folders').then(res => res.data),
+
   getFile: (id: number) => api.get<FileItem>(`/files/${id}`).then(res => res.data),
 
   createFile: (data: { name: string; content?: string; parent_id?: number; is_folder?: boolean }) =>
@@ -17,6 +19,9 @@ export const fileApi = {
 
   renameFile: (id: number, name: string) =>
     api.put<FileItem>(`/files/${id}`, { name }).then(res => res.data),
+
+  moveFile: (id: number, parentId: number | null) =>
+    api.put<FileItem>(`/files/${id}`, { parent_id: parentId }).then(res => res.data),
 
   exportFileUrl: (id: number, format: 'md' | 'html') =>
     `/api/files/${id}/export?format=${format}`,
