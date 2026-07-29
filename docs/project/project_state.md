@@ -98,7 +98,23 @@
 - Find Widget Esc 失效 — `MAINTENANCE.md` 索引
 - stop.bat 误杀进程 — `MAINTENANCE.md` § 13 / `06_stop_bat_test/`
 - **ISS-TRASH-001 垃圾桶功能数据库列缺失 + 路由顺序错误** — 见 `update/2026-07-29_16-22.md`
-- **ISS-TREE-001 文件树拖拽和嵌套功能** — 见 `update/2026-07-29_18-15.md`
+- **ISS-TREE-001 文件树拖拽和嵌套功能** — 见 `update/2026-07-29_18-15.md` + `MAINTENANCE.md` § 12
+
+#### ISS-TREE-001 🟩 文件树拖拽 + 嵌套支持
+- **问题**：文件树不支持拖拽到文件夹、文件夹展开按钮无效、不支持嵌套、parent_id null 无法显式设置
+- **现象**：
+  1. 拖拽文件到文件夹不进入文件夹
+  2. Chevron 按钮无响应
+  3. `POST /files` 创建子文件夹返回 400
+  4. 将文件移回根目录时 API 报 parent_id 不能解析
+- **根因**：详见 `MAINTENANCE.md` § 12（4 层根因分解）
+- **证据**：
+  - 最小复现：创建 2 个根文件夹 → 拖拽其中一个到另一个 → 文件未移动
+  - 锁定测试：`backend/test/07_trash/test_drag_folder.py`（5/5 通过）
+- **解决方式**：
+  - 前端 FileTree 添加 onDragOver/onDrop 区域 + Chevron 用 onMouseDown + 哨兵值 `__none__`
+  - 后端移除嵌套硬编码限制 + schema parent_id 改 `Union[int, str]`
+- **关联文件**：见 `MAINTENANCE.md` § 12.6
 
 ---
 

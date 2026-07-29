@@ -17,6 +17,7 @@
 9. [版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复](#9-版本时间显示错误--对比-overlay-滚动预览区定位修复)
 10. [版本对比 diff 整列染色 + 编辑界面同步滚动开关](#10-版本对比-diff-整列染色--编辑界面同步滚动开关)
 11. [Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归](#11-monaco-ime-中文输入跳末尾--修复引发的两次布局回归)
+12. [文件树拖拽嵌套 + parent_id null 处理](#12-文件树拖拽嵌套--parent_id-null-处理)
 
 ---
 
@@ -1170,3 +1171,153 @@ const handleSave = useCallback(() => {
 
 **文档：**
 - `docs/MAINTENANCE.md` — 追加本章
+
+---
+
+## 12. 文件树拖拽嵌套 + parent_id null 处理
+
+> **修复日期**: 2026-07-29
+> **状态**: ✅ 已修复并验证（5/5 测试通过）
+
+### 12.1 问题描述
+
+文件树组件 `FileTree.tsx` 存在三个交互问题：
+
+1. **拖拽到文件夹无效**：拖拽文件到文件夹上方时无视觉反馈，放开后文件不会进入文件夹
+2. **文件夹展开/收起按钮无效**：点击 chevron 图标后图标无切换、`children` 不展开
+3. **嵌套文件夹被拒绝**：创建子文件夹时 API 返回 400 错误，提示"文件夹只能在根目录创建，不支持嵌套"
+4. **parent_id null 无法显式设置**：将文件移回根目录时 API 无法区分"未传 parent_id"和"显式设为 null"
+
+### 12.2 根本原因（4 层）
+
+#### 12.2.1 拖拽放置区域未实现
+Row 组件仅有 `draggable` 属性，没实现 `onDragOver`/`onDrop` 事件处理器。
+
+#### 12.2.2 展开按钮事件处理冲突
+文件夹行使用 `onClick` 展开/收起，但 Chevron 按钮嵌套在 Row 内，点击会冒泡到 Row 的 onClick 并触发展开；同时如果在 Row 上加了 `onDrop` 用于接收拖拽，`e.preventDefault()` 会吃掉 Chevron 内部的点击事件。
+
+#### 12.2.3 后端硬编码嵌套限制
+`POST /files` 中存在硬编码限制：`if file.is_folder and file.parent_id is not None: raise 400`，导致任意层级嵌套都被拒绝。
+
+#### 12.2.4 parent_id null 语义冲突
+FastAPI / Pydantic v2 的 `Optional[int] = None` 注解无法区分：
+- 客户端不传 `parent_id` 字段（保持不变）
+- 客户端显式传 `parent_id: null`（设为 null）
+
+这两种情况在 schema 层都映射成同一个 Python `None`。
+
+### 12.3 解决方案
+
+#### 12.3.1 拖拽放置区域
+
+`frontend/src/components/FileTree/FileTree.tsx`：在 Row 上添加事件处理：
+
+```tsx
+const handleDragOver = (e: React.DragEvent) => {
+  e.preventDefault();           // 允许放置
+  e.stopPropagation();         // 不冒泡到父级
+  e.dataTransfer.dropEffect = 'move';
+};
+
+const handleDrop = (e: React.DragEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const data = e.dataTransfer.getData('application/json');
+  if (!data) return;
+  const { fileId, targetFolderId } = JSON.parse(data);
+  if (fileId === targetFolderId) return;  // 不能拖到自己
+  onDirectMove?.(fileId, targetFolderId);  // 回调到 DashboardPage
+};
+```
+
+#### 12.3.2 Chevron 按钮改用 onMouseDown + stopPropagation
+
+```tsx
+<button
+  onMouseDown={(e) => e.stopPropagation()}  // 阻止被 Row 抢占
+  onClick={(e) => { e.stopPropagation(); toggleExpand(folder.id); }}
+>
+  {isExpanded ? <ChevronDown /> : <ChevronRight />}
+</button>
+```
+
+`onMouseDown` 早于 `dragstart` 处理，避免被 drag 事件影响；`onClick` 内的 `stopPropagation` 阻止冒泡到 Row 的展开切换。
+
+#### 12.3.3 后端移除嵌套限制
+
+`backend/app/api/files.py`：删除硬编码的嵌套限制：
+
+```python
+# 删除前
+if file.is_folder and file.parent_id is not None:
+    raise HTTPException(status_code=400, detail="文件夹只能在根目录创建，不支持嵌套")
+
+# 删除后（无该限制，支持任意层级嵌套）
+```
+
+#### 12.3.4 parent_id 哨兵值
+
+前端的字符串哨兵 `__none__` 表示"移动到根目录"：
+
+`frontend/src/services/fileApi.ts`：
+```ts
+moveFile: async (fileId, parentId) => {
+  // 显式 None 用哨兵值发给后端，区分于"未传"
+  await api.put(`/files/${fileId}`, {
+    parent_id: parentId === null ? '__none__' : parentId,
+  });
+}
+```
+
+后端 `backend/app/schemas/file.py`：parent_id 类型放宽到 `Union[int, str]`
+```python
+from typing import Union
+class FileUpdate(BaseModel):
+    parent_id: Optional[Union[int, str]] = None  # 支持 "__none__"
+```
+
+后端 `backend/app/api/files.py`：
+```python
+if file.parent_id is not None:
+    if isinstance(file.parent_id, str) and file.parent_id == "__none__":
+        db_file.parent_id = None
+    elif isinstance(file.parent_id, str) and file.parent_id.isdigit():
+        db_file.parent_id = int(file.parent_id)
+    elif isinstance(file.parent_id, int):
+        db_file.parent_id = file.parent_id
+```
+
+### 12.4 关键设计点
+
+| 设计 | 为什么 |
+|---|---|
+| 用 `onDragOver` 阻止默认行为 | 否则浏览器默认不允许 drop |
+| 用字符串哨兵而非新增 query 参数 | 改动最小，向后兼容所有 PUT 调用方 |
+| `onMouseDown` 而不是 `onClick` | `onMouseDown` 在 `dragstart` 之前，避免被拖拽干扰 |
+| 后端 schema 用 `Union[int, str]` | 接受哨兵字符串 + 类型安全 |
+| 移除嵌套限制后无需新增 API | 通用父子关系天然支持任意层级 |
+
+### 12.5 测试验证
+
+`backend/test/07_trash/test_drag_folder.py`：5 项断言全通过 ✅
+
+| 场景 | 结果 |
+|---|---|
+| 嵌套文件夹创建 | ✅ PASS |
+| 文件夹内创建文件 | ✅ PASS |
+| 文件树结构验证 | ✅ PASS |
+| 移动文件到子文件夹 | ✅ PASS |
+| 使用哨兵值移动到根目录 | ✅ PASS |
+
+### 12.6 涉及文件清单
+
+**修改：**
+- `frontend/src/components/FileTree/FileTree.tsx` — 添加 onDragOver/onDrop、Chevron 改用 onMouseDown、添加 onDirectMove 回调
+- `frontend/src/pages/DashboardPage.tsx` — 添加 `moveFileMutation` 和 `handleDirectMove` 函数
+- `frontend/src/services/fileApi.ts` — `moveFile` 使用哨兵值
+- `backend/app/api/files.py` — 移除嵌套限制、添加 parent_id 字符串处理
+- `backend/app/schemas/file.py` — `FileUpdate.parent_id` 支持 `Union[int, str]`
+
+**新增：**
+- `backend/test/07_trash/test_drag_folder.py` — 5 场景端到端验证脚本
+- `backend/restart_server.py` — 后端重启辅助脚本

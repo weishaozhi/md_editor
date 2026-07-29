@@ -152,7 +152,7 @@ username=string&password=string
 - **POST** `/files`
 - **Headers:** `Authorization: Bearer <token>`
 - **说明:**
-  - 文件夹只能在根目录创建（`parent_id` 必须为 `null`），不支持嵌套
+  - 文件夹可创建在根目录或嵌套在其它文件夹中（支持任意层级嵌套，`parent_id` 可指向任意文件夹）
   - 文件可以创建在根目录或文件夹内
 - **Body:**
 ```json
@@ -172,12 +172,22 @@ username=string&password=string
   - 支持重命名（修改 `name`）
   - 支持移动文件（修改 `parent_id`）
   - 移动文件到 `parent_id` 时，会自动从垃圾桶恢复
+  - **`parent_id` 字段类型**：`int | string | null`，支持以下三种取值：
+    - `null` 或省略：保持原有 parent_id 不变
+    - 整数（如 `5`）：移动到该 ID 的文件夹
+    - 字符串哨兵 `"__none__"`：显式移动到根目录（将 parent_id 设为 null）
 - **Body (可选字段):**
 ```json
 {
   "name": "新名称.md",
   "content": "新内容",
   "parent_id": 1
+}
+```
+移动到根目录：
+```json
+{
+  "parent_id": "__none__"
 }
 ```
 - **Response (200):** 返回更新后的文件对象
