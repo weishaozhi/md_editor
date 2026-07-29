@@ -19,6 +19,7 @@
 11. [Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归](#11-monaco-ime-中文输入跳末尾--修复引发的两次布局回归)
 12. [文件树拖拽嵌套 + parent_id null 处理](#12-文件树拖拽嵌套--parent_id-null-处理)
 13. [文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 展开状态持久化](#13-文件夹展开收起按钮无效--嵌套视觉未区分--展开状态持久化)
+14. [CORS / credentials 安全配置（ISS-003 闭环）](#14-cors--credentials-安全配置iss-003-闭环)
 
 ---
 
@@ -1435,3 +1436,128 @@ export const useFileStore = create<FileState>()(
 **新增：**
 - [`backend/test/07_trash/test_folder_expand_ui.py`](../../backend/test/07_trash/test_folder_expand_ui.py) — 5 场景端到端验证脚本
 - [`update/2026-07-30_00-17.md`](../../update/2026-07-30_00-17.md) — 本次更新日志
+
+---
+
+## 14. CORS / credentials 安全配置（ISS-003 闭环）
+
+> **修复日期**: 2026-07-30
+> **状态**: ✅ 已修复并验证（4/4 测试通过）
+> **关联日志**: `update/2026-07-30_xx-yy.md`
+> **关联 ISS**: ISS-003（详见 [`project_state.md` § 3.3](./project/project_state.md)）
+
+### 14.1 问题描述
+
+[`backend/app/main.py`](../../backend/app/main.py) 写死 `allow_origins=["*"]` 与 `allow_credentials=True` 同时开启：
+
+- 本地开发一切正常（curl / Postman 不带 cookie 不触发）
+- 上线后浏览器请求带 `Cookie` 时直接被拒，控制台报：
+  > The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '\*' when the request's credentials mode is 'include'.
+
+表现：登录、鉴权、所有需要 cookie 的接口全部跨域失败。
+
+### 14.2 根本原因（3 层）
+
+#### 14.2.1 CORS 来源写死
+`main.py` 中 `allow_origins=["*"]` 直接写在源码里，没有任何配置项可改。同一份二进制既跑本地又跑线上，线上也无法指定允许的域名。
+
+#### 14.2.2 无安全校验
+即使把来源列表改掉，代码里仍然同时设置 `allow_credentials=True`，新部署者仍然可能写出不安全的 `*` + credentials 组合。
+
+#### 14.2.3 无 `.env.example` 模板
+仓库根没有 `.env.example`，新部署者不知道需要哪些环境变量，也不知道 `SECRET_KEY` / `CORS_ALLOW_ORIGINS` 必须覆盖。
+
+### 14.3 解决方案
+
+#### 14.3.1 `backend/app/config.py` — 新增 `CORS_ALLOW_ORIGINS` 配置
+
+```python
+class Settings(BaseSettings):
+    # ... 现有项 ...
+    CORS_ALLOW_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    DEBUG: bool = False
+```
+
+- 逗号分隔字符串，启动时切分为 `list[str]`
+- 默认值覆盖本地 Vite (5173) 与 CRA (3000)，开箱即用
+- `.env` 覆盖后才进入生产
+
+#### 14.3.2 `backend/app/main.py` — 启动校验
+
+```python
+_cors_raw = settings.CORS_ALLOW_ORIGINS.strip()
+if _cors_raw == "*":
+    if settings.DEBUG:
+        cors_origins = ["*"]                    # 仅 debug 允许
+        logger.warning("...")
+    else:
+        raise RuntimeError("...")               # 生产禁用 *
+else:
+    cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+    if not cors_origins:
+        raise RuntimeError("...")               # 空值拒绝
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=cors_origins != ["*"],   # * 模式强制 credentials=False
+    ...
+)
+```
+
+**关键点**：
+- 生产模式 (`DEBUG=False`) 启动时如果 `CORS_ALLOW_ORIGINS="*"` → 直接抛 `RuntimeError`，进程退出非 0
+- 生产模式空字符串 → 抛 `RuntimeError`
+- Debug 模式允许 `*`，但代码层强制 `credentials=False`，**永远** 不让不安全的组合出现
+
+#### 14.3.3 新增 `.env.example`
+
+仓库根新增 `.env.example` 模板：
+
+```bash
+DATABASE_URL=sqlite+aiosqlite:///./md_editor.db
+SECRET_KEY=replace-me-with-a-long-random-string
+WORKSPACE_PATH=./workspace
+
+CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
+
+DEBUG=False
+```
+
+- `.env` 已被 `.gitignore` 第 19 行 + 第 49 行排除；只提交 `.env.example`
+- 内联注释说明每个变量的用途 + 生产替换提示
+
+### 14.4 关键设计点
+
+||| 设计 | 为什么 |
+|||---|---|
+||| `*` 字符串而非列表配置项 | Pydantic env 解析字符串最简单，避免 JSON 数组语法差异；启动时切分 |
+||| `DEBUG` 模式允许 `*` | 本地用 curl/Postman 测试时不必列一堆域名；凭证自动禁用 |
+||| 启动时校验而非中间件运行时校验 | FastAPI 启动慢、不在 hot path；启动就 fail 让部署立刻可见 |
+||| 默认值给本地端口 | 克隆后不配 `.env` 也能跑通；上线必须改 `.env` |
+||| `_cors_state` 暴露 | 测试与健康检查可读取最终生效配置 |
+
+### 14.5 测试验证
+
+[`backend/test/08_cors/test_cors_config.py`](../../backend/test/08_cors/test_cors_config.py)：4 项断言全通过 ✅
+
+||| 场景 | 结果 |
+|||---|---|
+||| `CORS_ALLOW_ORIGINS=*` + `DEBUG=False` | ✅ PASS（进程退出非 0） |
+||| `CORS_ALLOW_ORIGINS=*` + `DEBUG=True` | ✅ PASS（启动 + credentials=False） |
+||| `CORS_ALLOW_ORIGINS=https://a.com,https://b.com` + `DEBUG=False` | ✅ PASS（启动 + credentials=True） |
+||| `CORS_ALLOW_ORIGINS=`（空字符串） | ✅ PASS（进程退出非 0） |
+
+### 14.6 涉及文件清单
+
+**修改：**
+- [`backend/app/config.py`](../../backend/app/config.py) — 加 `CORS_ALLOW_ORIGINS` 配置项 + VERSION 升级到 1.1.0
+- [`backend/app/main.py`](../../backend/app/main.py) — CORS middleware 读环境变量 + 安全校验 + `_cors_state` 暴露
+- [`docs/project/test.md`](../../docs/project/test.md) — §6 通过率表新增一行
+- [`docs/TESTS.md`](../../docs/TESTS.md) — 目录结构 + 索引新增 § 8
+- [`docs/project/project_state.md`](../../docs/project/project_state.md) — ISS-003 迁 § 3.3；§ 1 阶段；§ 2 #4 标记 ✅；§ 4 ADR 新增发布条目
+
+**新增：**
+- [`.env.example`](../../.env.example) — 环境变量模板
+- [`backend/test/08_cors/test_cors_config.py`](../../backend/test/08_cors/test_cors_config.py) — 4 项子进程启动校验
+- `update/2026-07-30_xx-yy.md` — 本次更新日志

@@ -7,8 +7,9 @@
 
 ## 1. 当前阶段
 
-- **阶段**：核心功能 + 文件管理增强（垃圾桶、拖拽嵌套）功能完成
+- **阶段**：核心功能 + 文件管理增强 + ISS-003 CORS 闭环完成，v1.1.0 发布准备就绪
 - **最近的交付**（来自 `git log`）：
+  - `6e823f1` feature：文件夹展开/收起 + 嵌套视觉 + 状态持久化
   - `7644afa` feature：文件树拖拽嵌套修复（5/5 测试通过）
   - `4aab6fd` feature(trash)：垃圾桶功能（软删除、恢复、永久删除、自动清理保留时间）
   - `226028b` docs：更新日志
@@ -25,7 +26,7 @@
 | 1 | 收口 `editor + version` 一系列修复，跑全量 `01_*` ~ `05_*` 测试 | [`test.md`](./test.md) | 全部退出码 0 |
 | 2 | 协作 WebSocket 引入 CRDT/OT（至少保证两人同时编辑不丢字符） | [`arch.md` § 4.4](./arch.md) | 双客户端并发用例通过 |
 | 3 | 插件系统运行时打通 | [`arch.md` § 3.1](./arch.md) | 安装/启用一个内置插件 |
-| 4 | 收敛 CORS 与 secret 配置为环境变量 | [`arch.md` § 5/6](./arch.md) | `.env.example` + 启动校验 |
+| 4 | 收敛 CORS 与 secret 配置为环境变量 | [`arch.md` § 5/6](./arch.md) | `.env.example` + 启动校验 | ✅ 已完成（ISS-003 闭环） |
 | 5 | 建立 CI：PR 触发 lint + 关键测试 | [`git-usage.md`](./git-usage.md) | PR 红→绿可见 |
 | 6 | 登录错误限频策略落地 | [`prd.md` § 3.2](./prd.md) | N 次/分钟返回 429 |
 
@@ -60,15 +61,6 @@
   2. 后端在 `app/plugins_runtime/` 下实现 `PluginManager`（注册 → 启动钩子）。
   3. 增加一个最小插件用例，启用 → 钩子触发 → 关闭 → 钩子解绑。
 
-#### ISS-003 🟥 CORS / 安全配置上线不可用
-- **现象**：`allow_origins=["*"]` + `allow_credentials=True`，上线后浏览器拒绝请求。
-- **根因**：浏览器规范不允许同时开启。
-- **证据**：`backend/app/main.py` 当前配置。
-- **解决方式**：
-  1. 通过环境变量 `CORS_ALLOW_ORIGINS` 注入允许来源。
-  2. `.env.example` 列出 `CORS_ALLOW_ORIGINS=https://your.domain`。
-  3. `app/config.py` 增加校验：非空才允许 `allow_credentials=True`。
-
 #### ISS-004 🟥 登录错误无频控
 - **现象**：同一账号可被脚本无限尝试。
 - **根因**：`auth.py` 中 `POST /auth/login` 没有限频。
@@ -96,7 +88,7 @@
 - diff 整列染色 + 同步滚动开关 — § 10
 - Monaco IME 中文输入跳末尾 — § 11
 - Find Widget Esc 失效 — `MAINTENANCE.md` 索引
-- stop.bat 误杀进程 — `MAINTENANCE.md` § 13 / `06_stop_bat_test/`
+- stop.bat 误杀进程 — `MAINTENANCE.md` § 3 / `06_stop_bat_test/`
 - **ISS-TRASH-001 垃圾桶功能数据库列缺失 + 路由顺序错误** — 见 `update/2026-07-29_16-22.md`
 - **ISS-TREE-001 文件树拖拽和嵌套功能** — 见 `update/2026-07-29_18-15.md` + `MAINTENANCE.md` § 12
 
@@ -131,6 +123,24 @@
   - `fileStore.ts` 接入 Zustand `persist`：Set↔Array 序列化往返
 - **关联文件**：见 `MAINTENANCE.md` § 13.6
 
+#### ISS-003 🟩 CORS / credentials 安全配置
+- **问题**：旧 `backend/app/main.py` 写死 `allow_origins=["*"]` + `allow_credentials=True`，浏览器规范禁止该组合，上线后跨域请求全部被拒
+- **现象**：
+  1. 本地开发用 `*` 一切正常
+  2. 上线后浏览器请求带 `Cookie` 时直接报 CORS 错误，无法登录、无法调用任何鉴权接口
+- **根因**：
+  1. CORS 来源未走配置，写死在源码里
+  2. 没有任何校验阻止不安全的 `*` + credentials 组合
+  3. 没有 `.env.example`，新部署者无法知道需要配置哪些项
+- **证据**：
+  - 最小复现：以 `allow_origins=["*"]` + `allow_credentials=True` 起服务 → 浏览器 console 报 "The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '*' when the request's credentials mode is 'include'"
+  - 锁定测试：`backend/test/08_cors/test_cors_config.py`（4/4 通过；覆盖 `* + DEBUG=False` 启动失败 / `* + DEBUG=True` 启动成功 + credentials=False / 显式列表 + credentials=True / 空值启动失败）
+- **解决方式**：
+  - `backend/app/config.py` 新增 `CORS_ALLOW_ORIGINS` 配置项，默认 `http://localhost:5173,http://localhost:3000`
+  - `backend/app/main.py` 启动时校验：`*` + `DEBUG=False` 直接 raise；`*` + `DEBUG=True` 强制 credentials=False；空字符串 raise
+  - 新增 `.env.example` 列出所有需要的环境变量
+- **关联文件**：见 `MAINTENANCE.md` § 14
+
 ---
 
 ## 4. 风险与决策记录（ADR-lite）
@@ -141,6 +151,7 @@
 | 2026-07-29 | 鉴权使用 JWT（HS256），不引入 OAuth | 单机部署、用户规模小 | 多端 SSO 后续讨论 |
 | 2026-07-29 | 协作先采用广播 + last-write-wins | 快速验证产品形态 | 复杂编辑需 CRDT/OT |
 | 2026-07-29 | 测试以“按主题归档的 Python 脚本”为主 | 不引入重型框架，便于手工 + 自动化 | CI 阶段补 pytest |
+| 2026-07-30 | 发布 v1.1.0（首次走完整分支流程） | 自 `c46ff89` 累计 16 次提交（feature+bugfix）；ISS-003 CORS 闭环 | 建立 `pre` / `release` 分支模型；后续 feature 必须基于 `pre` |
 
 ---
 

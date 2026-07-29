@@ -28,6 +28,8 @@ backend/test/
     ├── test_drag_folder.py
     ├── test_folder_expand_ui.py
     └── test_report.md
+└── 08_cors/                       # CORS / credentials 安全配置（ISS-003 闭环）
+    └── test_cors_config.py
 ```
 
 ---
@@ -201,6 +203,23 @@ backend/test/
 
 ---
 
+## 8. `08_cors/` — CORS / credentials 安全配置（ISS-003 闭环）
+
+### `test_cors_config.py`
+
+|| 项 | 内容 |
+||---|---|
+|| **类型** | 子进程启动校验（不依赖运行中的后端） |
+|| **目标** | 验证 `backend/app/main.py` 启动时 CORS 配置正确处理 `*` / 显式列表 / 空值 / DEBUG 模式四种情形 |
+|| **前置** | 无；子进程按需设置 `CORS_ALLOW_ORIGINS` 和 `DEBUG` 环境变量后 `python -c "from app.main import app"` |
+|| **覆盖场景** | 4 项：`CORS=* + DEBUG=False` 启动失败（拒绝不安全配置） / `CORS=* + DEBUG=True` 启动成功且 credentials=False / `CORS=https://a.com,https://b.com + DEBUG=False` 启动成功且 credentials=True / `CORS=` 空值启动失败 |
+|| **解决的问题** | ISS-003 —— 旧代码 `allow_origins=["*"]` 与 `allow_credentials=True` 同时开启，浏览器规范禁止，导致上线后跨域请求被拒 |
+|| **运行** | `python backend/test/08_cors/test_cors_config.py` |
+|| **退出码** | 0 = 4/4 通过；1 = 有失败用例 |
+|| **测试结果** | 4/4 通过 |
+
+---
+
 ## 使用约定
 
 ### BASE URL
@@ -258,5 +277,6 @@ python backend/test/05_export_rename/test_rename_export_version_comment.py
 | `07_trash/test_trash_api.py` | 垃圾桶功能（软删除、恢复、永久删除、设置） |
 | `07_trash/test_drag_folder.py` | 文件树拖拽嵌套功能（5/5 通过） |
 | `07_trash/test_folder_expand_ui.py` | 章节 13 —— 文件夹展开/收起 + 嵌套视觉区分 + 展开状态持久化（5/5 通过） |
+| `08_cors/test_cors_config.py` | ISS-003 —— CORS / credentials 安全配置（4/4 通过） |
 
 完整的问题描述、根因、修复方案见 [`docs/MAINTENANCE.md`](./MAINTENANCE.md)。
