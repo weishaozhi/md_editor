@@ -54,3 +54,5 @@ backend/.env
 
 # Update logs
 update/
+# 但保留重要的更新日志
+!update/
