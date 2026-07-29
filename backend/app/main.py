@@ -26,14 +26,45 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": str(exc) if settings.DEBUG else "Internal server error"}
     )
 
+# CORS 配置：来源从环境变量 CORS_ALLOW_ORIGINS 注入
+# 安全约束：allow_credentials=True 时不允许 "*"（浏览器规范禁止）
+_cors_raw = settings.CORS_ALLOW_ORIGINS.strip()
+if _cors_raw == "*":
+    if settings.DEBUG:
+        # 仅 DEBUG 模式下允许 "*"，并强制关闭 credentials，避免不安全组合
+        cors_origins = ["*"]
+        logger.warning(
+            "CORS_ALLOW_ORIGINS=* 与 DEBUG=True：不安全配置，仅供本地手测使用。"
+            "生产环境请显式列出允许来源。"
+        )
+    else:
+        raise RuntimeError(
+            "CORS_ALLOW_ORIGINS='*' 不能在生产环境使用。"
+            "请在 .env 中显式列出允许的来源，例如 "
+            "CORS_ALLOW_ORIGINS=https://your.domain,https://admin.your.domain"
+        )
+else:
+    cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+    if not cors_origins:
+        raise RuntimeError(
+            "CORS_ALLOW_ORIGINS 为空。请在 .env 中至少配置一个允许来源。"
+        )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+# Expose resolved CORS settings for runtime introspection & tests.
+# Read-only dict; do not mutate at runtime.
+_cors_state: dict = {
+    "origins": list(cors_origins),
+    "credentials": cors_origins != ["*"],
+}
 
 app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(files_router, prefix=settings.API_PREFIX)
