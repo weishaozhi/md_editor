@@ -51,3 +51,6 @@ backend/.env
 *.bak
 *.tmp
 *~
+
+# Update logs
+update/
