@@ -23,7 +23,7 @@
 
 | # | 任务 | 关联文档 | 验收 |
 |---|---|---|---|
-| 1 | 收口 `editor + version` 一系列修复，跑全量 `01_*` ~ `05_*` 测试 | [`test.md`](./test.md) | 全部退出码 0 |
+| 1 | 收口 `editor + version` 一系列修复，跑全量 `01_*` ~ `05_*` 测试 | [`test.md`](./test.md) | 全部退出码 0（ISS-006 中两个 `02_version` 端到端脚本与 Vite 端口不一致，留待修复） |
 | 2 | 协作 WebSocket 引入 CRDT/OT（至少保证两人同时编辑不丢字符） | [`arch.md` § 4.4](./arch.md) | 双客户端并发用例通过 |
 | 3 | 插件系统运行时打通 | [`arch.md` § 3.1](./arch.md) | 安装/启用一个内置插件 |
 | 4 | 收敛 CORS 与 secret 配置为环境变量 | [`arch.md` § 5/6](./arch.md) | `.env.example` + 启动校验 | ✅ 已完成（ISS-003 闭环） |
@@ -79,6 +79,18 @@
 - **解决方式**：
   1. 浏览器侧加 `requestAnimationFrame` 节流，避免高频 setState。
   2. 增加 200ms 内的 last-write-wins，丢弃中间帧。
+
+#### ISS-006 🟨 `02_version` 中两个端到端脚本与 Vite 端口不一致
+- **现象**：`test_userflow.py` 与 `test_frontend_key_consistency.py` 默认 `BASE = http://localhost:5174/api`，但 `frontend/vite.config.ts` 第 52 行实际监听 `5173`，导致脚本在没有 5174 端口的环境下退出码 1。
+- **根因**：测试脚本与 Vite 配置历史不同步。`TESTS.md` § 6 `02_version` 表也把 5174 写为 Vite 默认端口。
+- **证据**：
+  - 最小复现：仅启动后端（8000）→ 跑 `python test/02_version/test_userflow.py` → urllib `WinError 10061` 拒绝连接。
+  - 锁定证据：启动前端后访问 `http://localhost:5173/api` 正常（与 vite.config 一致），访问 5174 拒绝。
+- **解决方式**：
+  1. 把两个测试脚本里的 `BASE` 改为 `http://localhost:5173/api`，与 `vite.config.ts` 对齐。
+  2. 同步更新 `docs/TESTS.md` § 6 表（把"走 Vite 代理（与前端同源）"的端口从 5174 改为 5173）。
+  3. 不在本次 v1.1.0 范围内（属于独立 `bugfix`），留待 v1.1.x 收口。
+- **影响**：本次 v1.1.0 发布清单中这两个脚本以"已知前置条件不满足（无 Vite 5174）"跳过；其余 12 个脚本（包含 4 项 CORS 新增）均退出码 0。
 
 ### 3.3 已解决（已沉淀到 `MAINTENANCE.md`，此处不重复）
 
