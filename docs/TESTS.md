@@ -23,8 +23,9 @@ backend/test/
 │   └── test_rename_export_version_comment.py
 ├── 06_stop_bat_test/              # stop.bat 终点终止验证（防止误杀）
 │   └── test_stop_bat.py
-└── 07_trash/                      # 垃圾桶功能测试
+└── 07_trash/                      # 垃圾桶功能测试 + 文件树拖拽嵌套
     ├── test_trash_api.py
+    ├── test_drag_folder.py
     └── test_report.md
 ```
 
@@ -171,6 +172,19 @@ backend/test/
 | **退出码** | 0 = 全部通过；1 = 有失败用例 |
 | **注意事项** | 后端服务需要重启才能加载 `/trash` 路由 |
 
+### `test_drag_folder.py`
+
+| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP 测试 |
+| **目标接口** | `/api/files/tree` (GET), `/api/files` (POST), `/api/files/{id}` (PUT move) |
+| **前置** | 后端已启动（`http://localhost:8000`） |
+| **覆盖场景** | 嵌套文件夹创建、文件夹内创建文件、文件树结构验证、移动文件到子文件夹、使用哨兵值移动到根目录 |
+| **解决的问题** | 文件树拖拽和嵌套功能修复 |
+| **运行** | `python backend/test/07_trash/test_drag_folder.py` |
+| **退出码** | 0 = 5/5 通过；1 = 有失败用例 |
+| **测试结果** | 5/5 通过 |
+
 ---
 
 ## 使用约定
@@ -228,5 +242,6 @@ python backend/test/05_export_rename/test_rename_export_version_comment.py
 | `04_editor_sync/test_sync_scroll_ratio.py` | 章节 10 —— 同步滚动比例公式 |
 | `05_export_rename/test_rename_export_version_comment.py` | 章节 12 —— 3 个新功能 E2E（重命名 / 导出 / 版本评论） |
 | `07_trash/test_trash_api.py` | 垃圾桶功能（软删除、恢复、永久删除、设置） |
+| `07_trash/test_drag_folder.py` | 文件树拖拽嵌套功能（5/5 通过） |
 
 完整的问题描述、根因、修复方案见 [`docs/MAINTENANCE.md`](./MAINTENANCE.md)。
