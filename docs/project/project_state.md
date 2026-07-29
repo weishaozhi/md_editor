@@ -9,16 +9,9 @@
 
 - **阶段**：核心功能 + 文件管理增强（垃圾桶）功能完成
 - **最近的交付**（来自 `git log`）：
-  - `xxxxxx` feat(trash)：垃圾桶功能（软删除、恢复、永久删除、自动清理保留时间）
-  - `xxxxxx` feat(file)：文件移动到文件夹、文件夹重命名、分离文件/文件夹创建
-  - `c46ff89` feat(file+version)：可重命名 / 导出文件 / 版本快照评论
-  - `46e72d0` refactor(test)：7 个测试脚本按主题归档
-  - `20e4c61` fix(editor)：Monaco 中文输入法按空格选词后内容跳末尾 + 拼音残留
-  - `7aaa71e` fix(compare)+feat(editor)：diff 整列染色 + 同步滚动开关
-  - `b28bc9c` fix(compare)：版本对比 overlay 代码栏消失
-  - `d43aa49` fix(version)：版本时间显示错位 + overlay 滚动失效
-  - `5767943` fix(version)：版本面板 X 按钮无响应 + 全屏分屏对比
-  - `c486668` fix(editor)：Monaco Find Widget Esc 关闭失效
+  - `4aab6fd` feature(trash)：垃圾桶功能（软删除、恢复、永久删除、自动清理保留时间）
+  - `226028b` docs：更新日志
+  - `6d6548e` Co-authored：代码协作
 
 > 详细问题与修复过程见 [`../MAINTENANCE.md`](../MAINTENANCE.md)。
 
