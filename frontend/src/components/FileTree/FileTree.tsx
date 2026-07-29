@@ -29,6 +29,7 @@ interface FileTreeProps {
 
 interface RowProps {
   item: FileTreeItem;
+  level?: number;
   isEditing: boolean;
   isHovered: boolean;
   editValue: string;
@@ -42,10 +43,12 @@ interface RowProps {
   onContextMenu?: (e: React.MouseEvent, id: number, isFolder: boolean, name: string) => void;
   onDragStart?: (id: number, isFolder: boolean) => void;
   onDragEnd?: (id: number) => void;
+  onMove?: (fileId: number, targetFolderId: number) => void;
 }
 
 function Row({
   item,
+  level,
   isEditing,
   isHovered,
   editValue,
@@ -59,10 +62,12 @@ function Row({
   onContextMenu,
   onDragStart,
   onDragEnd,
+  onMove,
 }: RowProps) {
   const { toggleFolder, isFolderExpanded } = useFileStore();
   const inputRef = useRef<HTMLInputElement>(null);
   const isDragging = draggedItemId === item.id;
+  const isDragOver = useState(false);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -81,6 +86,31 @@ function Row({
     onDragEnd?.(item.id);
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    if (item.is_folder && !isEditing) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (item.is_folder && onMove) {
+      const data = e.dataTransfer.getData('text/plain');
+      if (data) {
+        try {
+          const { id } = JSON.parse(data);
+          if (id !== item.id) {
+            onMove(id, item.id);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  };
+
   return (
     <div
       className={clsx(
@@ -92,6 +122,8 @@ function Row({
       draggable
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       {/* Folder chevron OR spacer */}
       {item.is_folder ? (
