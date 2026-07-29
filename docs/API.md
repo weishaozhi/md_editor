@@ -66,6 +66,7 @@ username=string&password=string
 ### 获取文件树
 - **GET** `/files/tree`
 - **Headers:** `Authorization: Bearer <token>`
+- **说明:** 返回未删除的文件树，删除的文件不在此列表中
 - **Response (200):**
 ```json
 [
@@ -83,6 +84,27 @@ username=string&password=string
         "children": []
       }
     ]
+  }
+]
+```
+
+### 获取文件夹列表
+- **GET** `/files/folders`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 返回用户的所有文件夹（用于移动文件时的选择）
+- **Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "name": "文件夹",
+    "path": "文件夹",
+    "content": "",
+    "parent_id": null,
+    "is_folder": true,
+    "owner_id": 1,
+    "created_at": "2026-07-28T09:56:08.941425",
+    "updated_at": "2026-07-28T09:56:08.941425"
   }
 ]
 ```
@@ -129,6 +151,9 @@ username=string&password=string
 ### 创建文件/文件夹
 - **POST** `/files`
 - **Headers:** `Authorization: Bearer <token>`
+- **说明:**
+  - 文件夹可创建在根目录或嵌套在其它文件夹中（支持任意层级嵌套，`parent_id` 可指向任意文件夹）
+  - 文件可以创建在根目录或文件夹内
 - **Body:**
 ```json
 {
@@ -143,6 +168,14 @@ username=string&password=string
 ### 更新文件
 - **PUT** `/files/{file_id}`
 - **Headers:** `Authorization: Bearer <token>`
+- **说明:**
+  - 支持重命名（修改 `name`）
+  - 支持移动文件（修改 `parent_id`）
+  - 移动文件到 `parent_id` 时，会自动从垃圾桶恢复
+  - **`parent_id` 字段类型**：`int | string | null`，支持以下三种取值：
+    - `null` 或省略：保持原有 parent_id 不变
+    - 整数（如 `5`）：移动到该 ID 的文件夹
+    - 字符串哨兵 `"__none__"`：显式移动到根目录（将 parent_id 设为 null）
 - **Body (可选字段):**
 ```json
 {
@@ -151,15 +184,22 @@ username=string&password=string
   "parent_id": 1
 }
 ```
+移动到根目录：
+```json
+{
+  "parent_id": "__none__"
+}
+```
 - **Response (200):** 返回更新后的文件对象
 
-### 删除文件
+### 删除文件（移入垃圾桶）
 - **DELETE** `/files/{file_id}`
 - **Headers:** `Authorization: Bearer <token>`
+- **说明:** 软删除，将文件移入垃圾桶，`deleted_at` 字段记录删除时间
 - **Response (200):**
 ```json
 {
-  "message": "删除成功"
+  "message": "已移入垃圾桶"
 }
 ```
 
@@ -401,3 +441,91 @@ username=string&password=string
 - `403` - 无权限访问
 - `404` - 资源不存在
 - `500` - 服务器内部错误
+
+---
+
+## 垃圾桶接口 `/trash`
+
+> 文件删除后进入垃圾桶，可在垃圾桶中恢复或永久删除。
+
+### 获取垃圾桶文件列表
+- **GET** `/trash`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 返回当前用户删除的文件列表，按删除时间倒序排列
+- **Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "name": "已删除的文档.md",
+    "path": "已删除的文档.md",
+    "content": "文件内容...",
+    "parent_id": null,
+    "is_folder": false,
+    "owner_id": 1,
+    "created_at": "2026-07-28T09:56:08.941425",
+    "updated_at": "2026-07-28T09:56:08.941425",
+    "deleted_at": "2026-07-29T10:30:00.000000"
+  }
+]
+```
+
+### 恢复文件
+- **POST** `/trash/{file_id}/restore`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 将文件从垃圾桶恢复到原位置
+- **Response (200):**
+```json
+{
+  "message": "文件已恢复"
+}
+```
+
+### 永久删除
+- **DELETE** `/trash/{file_id}`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 永久删除文件，无法恢复
+- **Response (200):**
+```json
+{
+  "message": "永久删除成功"
+}
+```
+
+### 清空垃圾桶
+- **DELETE** `/trash/empty`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 清空当前用户垃圾桶中的所有文件
+- **Response (200):**
+```json
+{
+  "message": "已清空垃圾桶，删除 5 个项目"
+}
+```
+
+### 获取垃圾桶设置
+- **GET** `/trash/settings`
+- **Headers:** `Authorization: Bearer <token>`
+- **说明:** 获取自动清理保留时间设置
+- **Response (200):**
+```json
+{
+  "id": 1,
+  "user_id": 1,
+  "retention_hours": 168,
+  "created_at": "2026-07-28T09:56:08.941425"
+}
+```
+- **说明:** `retention_hours` 为 `null` 表示永久保留，不自动清理
+
+### 更新垃圾桶设置
+- **PUT** `/trash/settings`
+- **Headers:** `Authorization: Bearer <token>`
+- **Body:**
+```json
+{
+  "retention_hours": 168
+}
+```
+- **说明:** `retention_hours` 设置保留小时数，`null` 表示永久保留，`0` 或负数无效
+- **Response (200):** 返回更新后的设置对象

@@ -1,0 +1,27 @@
+# MD Editor 配置文件
+# 所有可配置项必须在此文件中定义，禁止硬编码
+
+# 服务器配置
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true  # 开发模式下启用热重载
+  log_level: "info"  # uvicorn 日志级别
+
+# 日志配置
+logging:
+  level: "DEBUG"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  datefmt: "%Y-%m-%d %H:%M:%S"
+
+# 日志文件配置
+log_file:
+  enabled: true
+  path: "logs/app.log"  # 相对于 backend 目录
+  max_bytes: 10485760   # 10MB
+  backup_count: 5       # 保留最近 5 个备份
+
+# 控制台日志
+console:
+  enabled: true
+  level: "INFO"

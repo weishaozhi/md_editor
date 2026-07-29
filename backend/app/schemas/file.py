@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 from app.schemas.user import UserResponse
 
 
@@ -33,10 +33,27 @@ class FileCreate(FileBase):
     content: str = ""
 
 
+class ParentIdUpdate(BaseModel):
+    """用于 parent_id 更新的特殊 schema"""
+    parent_id: Union[int, str, None] = None
+
+    def get_parent_id(self) -> Optional[int]:
+        if self.parent_id is None:
+            return None
+        if isinstance(self.parent_id, int):
+            return self.parent_id
+        if isinstance(self.parent_id, str):
+            if self.parent_id == "__none__":
+                return None
+            if self.parent_id.isdigit():
+                return int(self.parent_id)
+        return None
+
+
 class FileUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
-    parent_id: Optional[int] = None
+    parent_id: Optional[Union[int, str]] = None  # 支持整数ID或字符串哨兵 "__none__"
 
 
 class FileResponse(BaseModel):
@@ -49,6 +66,7 @@ class FileResponse(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+    deleted_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

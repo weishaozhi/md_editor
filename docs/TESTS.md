@@ -19,10 +19,17 @@ backend/test/
 │   └── test_format_date_logic.py
 ├── 04_editor_sync/                # 编辑器 ↔ 预览同步滚动
 │   └── test_sync_scroll_ratio.py
-└── 05_export_rename/              # 导出 / 重命名 / 版本评论（3 个新功能 E2E）
+├── 05_export_rename/             # 导出 / 重命名 / 版本评论（3 个新功能 E2E）
 │   └── test_rename_export_version_comment.py
-└── 06_stop_bat_test/               # stop.bat 终点终止验证（防止误杀）
-    └── test_stop_bat.py
+├── 06_stop_bat_test/              # stop.bat 终点终止验证（防止误杀）
+│   └── test_stop_bat.py
+└── 07_trash/                      # 垃圾桶功能测试 + 文件树拖拽嵌套
+    ├── test_trash_api.py
+    ├── test_drag_folder.py
+    ├── test_folder_expand_ui.py
+    └── test_report.md
+└── 08_cors/                       # CORS / credentials 安全配置（ISS-003 闭环）
+    └── test_cors_config.py
 ```
 
 ---
@@ -153,6 +160,66 @@ backend/test/
 
 ---
 
+## 7. `07_trash/` — 垃圾桶功能测试
+
+### `test_trash_api.py`
+
+| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP 测试 |
+| **目标接口** | `/api/files/{id}` (DELETE 软删除), `/api/trash` (GET), `/api/trash/{id}/restore` (POST), `/api/trash/{id}` (DELETE 永久删除), `/api/trash/empty` (DELETE 清空), `/api/trash/settings` (GET/PUT) |
+| **前置** | 后端已启动（`http://localhost:8000`），需重启以加载新路由 |
+| **覆盖场景** | 创建文件/文件夹、软删除、获取垃圾桶列表、恢复文件、永久删除、垃圾桶设置、清空垃圾桶 |
+| **解决的问题** | 垃圾桶功能实现后的验证测试 |
+| **运行** | `python backend/test/07_trash/test_trash_api.py` |
+| **退出码** | 0 = 全部通过；1 = 有失败用例 |
+| **注意事项** | 后端服务需要重启才能加载 `/trash` 路由 |
+
+### `test_drag_folder.py`
+
+| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP 测试 |
+| **目标接口** | `/api/files/tree` (GET), `/api/files` (POST), `/api/files/{id}` (PUT move) |
+| **前置** | 后端已启动（`http://localhost:8000`） |
+| **覆盖场景** | 嵌套文件夹创建、文件夹内创建文件、文件树结构验证、移动文件到子文件夹、使用哨兵值移动到根目录 |
+| **解决的问题** | 文件树拖拽和嵌套功能修复 |
+| **运行** | `python backend/test/07_trash/test_drag_folder.py` |
+| **退出码** | 0 = 5/5 通过；1 = 有失败用例 |
+| **测试结果** | 5/5 通过 |
+
+### `test_folder_expand_ui.py`
+
+|| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP + 纯 Python 模拟前端 store + 源码静态契约 |
+| **目标** | 验证文件夹展开/收起 UI 行为：后端嵌套结构、默认收起、toggle 切换、Zustand persist 序列化往返、源码缩进/左边框样式 |
+| **前置** | 后端已启动（`http://localhost:8000`） |
+| **覆盖场景** | 5 项：后端嵌套树结构 / store 默认全部收起 / toggleFolder 双向切换且互不干扰 / Set↔JSON 序列化往返 / FileTree.tsx 与 fileStore.ts 源码含 `isFolderExpanded` 守卫与 `ml-4`/`border-l`/`persist`/`partialize`/`onRehydrateStorage` |
+| **解决的问题** | 章节 13 —— 文件夹展开/收起按钮无效、文件夹内文件与外部文件未区分、刷新后展开状态丢失 |
+| **运行** | `python backend/test/07_trash/test_folder_expand_ui.py` |
+| **退出码** | 0 = 5/5 通过；1 = 有失败用例 |
+| **测试结果** | 5/5 通过 |
+
+---
+
+## 8. `08_cors/` — CORS / credentials 安全配置（ISS-003 闭环）
+
+### `test_cors_config.py`
+
+|| 项 | 内容 |
+||---|---|
+|| **类型** | 子进程启动校验（不依赖运行中的后端） |
+|| **目标** | 验证 `backend/app/main.py` 启动时 CORS 配置正确处理 `*` / 显式列表 / 空值 / DEBUG 模式四种情形 |
+|| **前置** | 无；子进程按需设置 `CORS_ALLOW_ORIGINS` 和 `DEBUG` 环境变量后 `python -c "from app.main import app"` |
+|| **覆盖场景** | 4 项：`CORS=* + DEBUG=False` 启动失败（拒绝不安全配置） / `CORS=* + DEBUG=True` 启动成功且 credentials=False / `CORS=https://a.com,https://b.com + DEBUG=False` 启动成功且 credentials=True / `CORS=` 空值启动失败 |
+|| **解决的问题** | ISS-003 —— 旧代码 `allow_origins=["*"]` 与 `allow_credentials=True` 同时开启，浏览器规范禁止，导致上线后跨域请求被拒 |
+|| **运行** | `python backend/test/08_cors/test_cors_config.py` |
+|| **退出码** | 0 = 4/4 通过；1 = 有失败用例 |
+|| **测试结果** | 4/4 通过 |
+
+---
+
 ## 使用约定
 
 ### BASE URL
@@ -207,5 +274,9 @@ python backend/test/05_export_rename/test_rename_export_version_comment.py
 | `03_version_ui/test_format_date_logic.py` | 章节 9 —— 时区格式化与排序 |
 | `04_editor_sync/test_sync_scroll_ratio.py` | 章节 10 —— 同步滚动比例公式 |
 | `05_export_rename/test_rename_export_version_comment.py` | 章节 12 —— 3 个新功能 E2E（重命名 / 导出 / 版本评论） |
+| `07_trash/test_trash_api.py` | 垃圾桶功能（软删除、恢复、永久删除、设置） |
+| `07_trash/test_drag_folder.py` | 文件树拖拽嵌套功能（5/5 通过） |
+| `07_trash/test_folder_expand_ui.py` | 章节 13 —— 文件夹展开/收起 + 嵌套视觉区分 + 展开状态持久化（5/5 通过） |
+| `08_cors/test_cors_config.py` | ISS-003 —— CORS / credentials 安全配置（4/4 通过） |
 
 完整的问题描述、根因、修复方案见 [`docs/MAINTENANCE.md`](./MAINTENANCE.md)。

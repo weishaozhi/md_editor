@@ -41,6 +41,7 @@ backend/__pycache__/
 backend/**/__pycache__/
 backend/*.pyc
 backend/logs/
+backend/app/logs/
 backend/*.log
 backend/md_editor.db
 backend/md_editor.db-journal
@@ -51,3 +52,8 @@ backend/.env
 *.bak
 *.tmp
 *~
+
+# Update logs
+update/
+# 但保留重要的更新日志
+!update/

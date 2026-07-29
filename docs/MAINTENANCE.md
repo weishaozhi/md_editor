@@ -17,6 +17,9 @@
 9. [版本时间显示错误 + 对比 Overlay 滚动/预览区定位修复](#9-版本时间显示错误--对比-overlay-滚动预览区定位修复)
 10. [版本对比 diff 整列染色 + 编辑界面同步滚动开关](#10-版本对比-diff-整列染色--编辑界面同步滚动开关)
 11. [Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归](#11-monaco-ime-中文输入跳末尾--修复引发的两次布局回归)
+12. [文件树拖拽嵌套 + parent_id null 处理](#12-文件树拖拽嵌套--parent_id-null-处理)
+13. [文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 展开状态持久化](#13-文件夹展开收起按钮无效--嵌套视觉未区分--展开状态持久化)
+14. [CORS / credentials 安全配置（ISS-003 闭环）](#14-cors--credentials-安全配置iss-003-闭环)
 
 ---
 
@@ -1170,3 +1173,391 @@ const handleSave = useCallback(() => {
 
 **文档：**
 - `docs/MAINTENANCE.md` — 追加本章
+
+---
+
+## 12. 文件树拖拽嵌套 + parent_id null 处理
+
+> **修复日期**: 2026-07-29
+> **状态**: ✅ 已修复并验证（5/5 测试通过）
+
+### 12.1 问题描述
+
+文件树组件 `FileTree.tsx` 存在三个交互问题：
+
+1. **拖拽到文件夹无效**：拖拽文件到文件夹上方时无视觉反馈，放开后文件不会进入文件夹
+2. **文件夹展开/收起按钮无效**：点击 chevron 图标后图标无切换、`children` 不展开
+3. **嵌套文件夹被拒绝**：创建子文件夹时 API 返回 400 错误，提示"文件夹只能在根目录创建，不支持嵌套"
+4. **parent_id null 无法显式设置**：将文件移回根目录时 API 无法区分"未传 parent_id"和"显式设为 null"
+
+### 12.2 根本原因（4 层）
+
+#### 12.2.1 拖拽放置区域未实现
+Row 组件仅有 `draggable` 属性，没实现 `onDragOver`/`onDrop` 事件处理器。
+
+#### 12.2.2 展开按钮事件处理冲突
+文件夹行使用 `onClick` 展开/收起，但 Chevron 按钮嵌套在 Row 内，点击会冒泡到 Row 的 onClick 并触发展开；同时如果在 Row 上加了 `onDrop` 用于接收拖拽，`e.preventDefault()` 会吃掉 Chevron 内部的点击事件。
+
+#### 12.2.3 后端硬编码嵌套限制
+`POST /files` 中存在硬编码限制：`if file.is_folder and file.parent_id is not None: raise 400`，导致任意层级嵌套都被拒绝。
+
+#### 12.2.4 parent_id null 语义冲突
+FastAPI / Pydantic v2 的 `Optional[int] = None` 注解无法区分：
+- 客户端不传 `parent_id` 字段（保持不变）
+- 客户端显式传 `parent_id: null`（设为 null）
+
+这两种情况在 schema 层都映射成同一个 Python `None`。
+
+### 12.3 解决方案
+
+#### 12.3.1 拖拽放置区域
+
+`frontend/src/components/FileTree/FileTree.tsx`：在 Row 上添加事件处理：
+
+```tsx
+const handleDragOver = (e: React.DragEvent) => {
+  e.preventDefault();           // 允许放置
+  e.stopPropagation();         // 不冒泡到父级
+  e.dataTransfer.dropEffect = 'move';
+};
+
+const handleDrop = (e: React.DragEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const data = e.dataTransfer.getData('application/json');
+  if (!data) return;
+  const { fileId, targetFolderId } = JSON.parse(data);
+  if (fileId === targetFolderId) return;  // 不能拖到自己
+  onDirectMove?.(fileId, targetFolderId);  // 回调到 DashboardPage
+};
+```
+
+#### 12.3.2 Chevron 按钮改用 onMouseDown + stopPropagation
+
+```tsx
+<button
+  onMouseDown={(e) => e.stopPropagation()}  // 阻止被 Row 抢占
+  onClick={(e) => { e.stopPropagation(); toggleExpand(folder.id); }}
+>
+  {isExpanded ? <ChevronDown /> : <ChevronRight />}
+</button>
+```
+
+`onMouseDown` 早于 `dragstart` 处理，避免被 drag 事件影响；`onClick` 内的 `stopPropagation` 阻止冒泡到 Row 的展开切换。
+
+#### 12.3.3 后端移除嵌套限制
+
+`backend/app/api/files.py`：删除硬编码的嵌套限制：
+
+```python
+# 删除前
+if file.is_folder and file.parent_id is not None:
+    raise HTTPException(status_code=400, detail="文件夹只能在根目录创建，不支持嵌套")
+
+# 删除后（无该限制，支持任意层级嵌套）
+```
+
+#### 12.3.4 parent_id 哨兵值
+
+前端的字符串哨兵 `__none__` 表示"移动到根目录"：
+
+`frontend/src/services/fileApi.ts`：
+```ts
+moveFile: async (fileId, parentId) => {
+  // 显式 None 用哨兵值发给后端，区分于"未传"
+  await api.put(`/files/${fileId}`, {
+    parent_id: parentId === null ? '__none__' : parentId,
+  });
+}
+```
+
+后端 `backend/app/schemas/file.py`：parent_id 类型放宽到 `Union[int, str]`
+```python
+from typing import Union
+class FileUpdate(BaseModel):
+    parent_id: Optional[Union[int, str]] = None  # 支持 "__none__"
+```
+
+后端 `backend/app/api/files.py`：
+```python
+if file.parent_id is not None:
+    if isinstance(file.parent_id, str) and file.parent_id == "__none__":
+        db_file.parent_id = None
+    elif isinstance(file.parent_id, str) and file.parent_id.isdigit():
+        db_file.parent_id = int(file.parent_id)
+    elif isinstance(file.parent_id, int):
+        db_file.parent_id = file.parent_id
+```
+
+### 12.4 关键设计点
+
+| 设计 | 为什么 |
+|---|---|
+| 用 `onDragOver` 阻止默认行为 | 否则浏览器默认不允许 drop |
+| 用字符串哨兵而非新增 query 参数 | 改动最小，向后兼容所有 PUT 调用方 |
+| `onMouseDown` 而不是 `onClick` | `onMouseDown` 在 `dragstart` 之前，避免被拖拽干扰 |
+| 后端 schema 用 `Union[int, str]` | 接受哨兵字符串 + 类型安全 |
+| 移除嵌套限制后无需新增 API | 通用父子关系天然支持任意层级 |
+
+### 12.5 测试验证
+
+`backend/test/07_trash/test_drag_folder.py`：5 项断言全通过 ✅
+
+| 场景 | 结果 |
+|---|---|
+| 嵌套文件夹创建 | ✅ PASS |
+| 文件夹内创建文件 | ✅ PASS |
+| 文件树结构验证 | ✅ PASS |
+| 移动文件到子文件夹 | ✅ PASS |
+| 使用哨兵值移动到根目录 | ✅ PASS |
+
+### 12.6 涉及文件清单
+
+**修改：**
+- `frontend/src/components/FileTree/FileTree.tsx` — 添加 onDragOver/onDrop、Chevron 改用 onMouseDown、添加 onDirectMove 回调
+- `frontend/src/pages/DashboardPage.tsx` — 添加 `moveFileMutation` 和 `handleDirectMove` 函数
+- `frontend/src/services/fileApi.ts` — `moveFile` 使用哨兵值
+- `backend/app/api/files.py` — 移除嵌套限制、添加 parent_id 字符串处理
+- `backend/app/schemas/file.py` — `FileUpdate.parent_id` 支持 `Union[int, str]`
+
+**新增：**
+- `backend/test/07_trash/test_drag_folder.py` — 5 场景端到端验证脚本
+- `backend/restart_server.py` — 后端重启辅助脚本
+
+---
+
+## 13. 文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 展开状态持久化
+
+> **修复日期**: 2026-07-30
+> **状态**: ✅ 已修复并验证（5/5 测试通过）
+> **关联日志**: [`update/2026-07-30_00-17.md`](../../update/2026-07-30_00-17.md)
+> **前置章节**: § 12（拖拽嵌套 + parent_id null）—— 本章是其后续修复
+
+### 13.1 问题描述
+
+`update/2026-07-29_18-15.md` 中虽然声明"修复了 Chevron 按钮无效"，但仅切了图标，没有把展开状态接入渲染层，仍存在三处遗留问题：
+
+1. **children 始终展开，无法收起**：点击 Chevron 图标后图标会切换，但文件夹内部文件始终显示
+2. **嵌套子项与外部文件视觉上无区分**：子树与顶层项平铺，缺乏缩进/分组
+3. **刷新后展开状态全部丢失**：刷新浏览器或重启前端，所有文件夹回到默认收起状态
+
+### 13.2 根本原因（3 层）
+
+#### 13.2.1 渲染层未消费 store 状态
+`FileTree.tsx` 渲染子 `FileTree` 时仅判断 `item.children.length > 0`，未读取 `isFolderExpanded(item.id)`。
+
+#### 13.2.2 缺缩进/分组容器
+递归 `FileTree` 与外层项同级渲染，缺 `depth` 参数与外层 div，无法施加缩进和左边框。
+
+#### 13.2.3 store 没有持久化层
+`fileStore` 仅在内存中维护 `Set<number>`，未挂 Zustand `persist` 中间件，刷新后丢失。
+
+### 13.3 解决方案
+
+#### 13.3.1 把展开状态接入渲染（修复问题 1）
+[`frontend/src/components/FileTree/FileTree.tsx`](../../frontend/src/components/FileTree/FileTree.tsx) 在函数体顶部声明 `useFileStore()` 并加守卫：
+
+```tsx
+const { isFolderExpanded } = useFileStore();
+
+{item.is_folder && isFolderExpanded(item.id) && item.children.length > 0 && (
+  <div className="ml-4 pl-2 border-l border-slate-200 dark:border-slate-700">
+    <FileTree ... depth={depth + 1} />
+  </div>
+)}
+```
+
+#### 13.3.2 嵌套子项缩进 + 左边框（修复问题 2）
+`FileTreeProps` 新增 `depth?: number`（顶层默认 0），递归调用传入 `depth + 1`。子 `FileTree` 用 `ml-4 pl-2 border-l border-slate-200 dark:border-slate-700` 包住——左外边距 16px、内部留白 8px、左侧 1px 浅灰边框，文件夹内文件与外部文件视觉上分离。
+
+#### 13.3.3 Zustand persist 持久化（修复问题 3）
+[`frontend/src/store/fileStore.ts`](../../frontend/src/store/fileStore.ts) 加 `persist` 中间件，参照 `authStore.ts` 的写法：
+
+```ts
+export const useFileStore = create<FileState>()(
+  persist(
+    (set, get) => ({
+      expandedFolders: new Set<number>(),
+      toggleFolder: (folderId) => {
+        const expanded = new Set(get().expandedFolders);
+        expanded.has(folderId) ? expanded.delete(folderId) : expanded.add(folderId);
+        set({ expandedFolders: expanded });
+      },
+      isFolderExpanded: (folderId) => get().expandedFolders.has(folderId),
+      // ...
+    }),
+    {
+      name: 'file-tree-storage',
+      partialize: (state) => ({ expandedFolders: Array.from(state.expandedFolders) }),
+      onRehydrateStorage: () => (state) => {
+        if (state && Array.isArray((state as { expandedFolders?: unknown }).expandedFolders)) {
+          state.expandedFolders = new Set(
+            (state as { expandedFolders: number[] }).expandedFolders,
+          );
+        }
+      },
+    },
+  ),
+);
+```
+
+要点：`Set<number>` 不能直接 JSON 序列化，必须在 `partialize` 转 `Array<number>` 写入 `localStorage`，在 `onRehydrateStorage` 还原为 `Set<number>`。
+
+### 13.4 关键设计点
+
+|| 设计 | 为什么 |
+||---|---|
+|| 守卫放在渲染处而非 store | store 不该关心 UI；切换逻辑与渲染判断分离更易测 |
+|| 缩进写死 `ml-4`，不动态拼接 | Tailwind JIT 不支持运行时拼接类名；固定值覆盖 ≥ 6 层嵌套 |
+|| `border-l` + `pl-2` 组合 | 左边框提供分组标识，`pl-2` 让子项图标不贴边 |
+|| `Set` 序列化拆两步 | Zustand persist 不支持自定义类型转换，必须 `partialize` + `onRehydrateStorage` 配对 |
+|| 持久化键独立命名 `file-tree-storage` | 与 `auth-storage` 隔离，避免状态污染 |
+
+### 13.5 测试验证
+
+[`backend/test/07_trash/test_folder_expand_ui.py`](../../backend/test/07_trash/test_folder_expand_ui.py)：5 项断言全通过 ✅
+
+|| 场景 | 结果 |
+||---|---|
+|| 后端嵌套树结构（Outer→Inner→NestedDoc） | ✅ PASS |
+|| 默认 store 全部收起 | ✅ PASS |
+|| toggleFolder 双向切换且互不干扰 | ✅ PASS |
+|| Set ↔ JSON 序列化往返不丢数据 | ✅ PASS |
+|| 源码静态契约（`ml-4` / `border-l` / `pl-2` / `isFolderExpanded` / `persist` / `partialize` / `onRehydrateStorage`） | ✅ PASS |
+
+### 13.6 涉及文件清单
+
+**修改：**
+- [`frontend/src/components/FileTree/FileTree.tsx`](../../frontend/src/components/FileTree/FileTree.tsx) — `FileTreeProps` 加 `depth`、递归处加 `isFolderExpanded` 守卫与缩进/边框 div
+- [`frontend/src/store/fileStore.ts`](../../frontend/src/store/fileStore.ts) — 加 `persist` 中间件、`Set ↔ Array` 序列化往返
+- [`docs/TESTS.md`](../../docs/TESTS.md) — 索引新增脚本
+- [`docs/project/test.md`](../../docs/project/test.md) — §6 通过率表新增一行
+
+**新增：**
+- [`backend/test/07_trash/test_folder_expand_ui.py`](../../backend/test/07_trash/test_folder_expand_ui.py) — 5 场景端到端验证脚本
+- [`update/2026-07-30_00-17.md`](../../update/2026-07-30_00-17.md) — 本次更新日志
+
+---
+
+## 14. CORS / credentials 安全配置（ISS-003 闭环）
+
+> **修复日期**: 2026-07-30
+> **状态**: ✅ 已修复并验证（4/4 测试通过）
+> **关联日志**: `update/2026-07-30_xx-yy.md`
+> **关联 ISS**: ISS-003（详见 [`project_state.md` § 3.3](./project/project_state.md)）
+
+### 14.1 问题描述
+
+[`backend/app/main.py`](../../backend/app/main.py) 写死 `allow_origins=["*"]` 与 `allow_credentials=True` 同时开启：
+
+- 本地开发一切正常（curl / Postman 不带 cookie 不触发）
+- 上线后浏览器请求带 `Cookie` 时直接被拒，控制台报：
+  > The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '\*' when the request's credentials mode is 'include'.
+
+表现：登录、鉴权、所有需要 cookie 的接口全部跨域失败。
+
+### 14.2 根本原因（3 层）
+
+#### 14.2.1 CORS 来源写死
+`main.py` 中 `allow_origins=["*"]` 直接写在源码里，没有任何配置项可改。同一份二进制既跑本地又跑线上，线上也无法指定允许的域名。
+
+#### 14.2.2 无安全校验
+即使把来源列表改掉，代码里仍然同时设置 `allow_credentials=True`，新部署者仍然可能写出不安全的 `*` + credentials 组合。
+
+#### 14.2.3 无 `.env.example` 模板
+仓库根没有 `.env.example`，新部署者不知道需要哪些环境变量，也不知道 `SECRET_KEY` / `CORS_ALLOW_ORIGINS` 必须覆盖。
+
+### 14.3 解决方案
+
+#### 14.3.1 `backend/app/config.py` — 新增 `CORS_ALLOW_ORIGINS` 配置
+
+```python
+class Settings(BaseSettings):
+    # ... 现有项 ...
+    CORS_ALLOW_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    DEBUG: bool = False
+```
+
+- 逗号分隔字符串，启动时切分为 `list[str]`
+- 默认值覆盖本地 Vite (5173) 与 CRA (3000)，开箱即用
+- `.env` 覆盖后才进入生产
+
+#### 14.3.2 `backend/app/main.py` — 启动校验
+
+```python
+_cors_raw = settings.CORS_ALLOW_ORIGINS.strip()
+if _cors_raw == "*":
+    if settings.DEBUG:
+        cors_origins = ["*"]                    # 仅 debug 允许
+        logger.warning("...")
+    else:
+        raise RuntimeError("...")               # 生产禁用 *
+else:
+    cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+    if not cors_origins:
+        raise RuntimeError("...")               # 空值拒绝
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=cors_origins != ["*"],   # * 模式强制 credentials=False
+    ...
+)
+```
+
+**关键点**：
+- 生产模式 (`DEBUG=False`) 启动时如果 `CORS_ALLOW_ORIGINS="*"` → 直接抛 `RuntimeError`，进程退出非 0
+- 生产模式空字符串 → 抛 `RuntimeError`
+- Debug 模式允许 `*`，但代码层强制 `credentials=False`，**永远** 不让不安全的组合出现
+
+#### 14.3.3 新增 `.env.example`
+
+仓库根新增 `.env.example` 模板：
+
+```bash
+DATABASE_URL=sqlite+aiosqlite:///./md_editor.db
+SECRET_KEY=replace-me-with-a-long-random-string
+WORKSPACE_PATH=./workspace
+
+CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
+
+DEBUG=False
+```
+
+- `.env` 已被 `.gitignore` 第 19 行 + 第 49 行排除；只提交 `.env.example`
+- 内联注释说明每个变量的用途 + 生产替换提示
+
+### 14.4 关键设计点
+
+||| 设计 | 为什么 |
+|||---|---|
+||| `*` 字符串而非列表配置项 | Pydantic env 解析字符串最简单，避免 JSON 数组语法差异；启动时切分 |
+||| `DEBUG` 模式允许 `*` | 本地用 curl/Postman 测试时不必列一堆域名；凭证自动禁用 |
+||| 启动时校验而非中间件运行时校验 | FastAPI 启动慢、不在 hot path；启动就 fail 让部署立刻可见 |
+||| 默认值给本地端口 | 克隆后不配 `.env` 也能跑通；上线必须改 `.env` |
+||| `_cors_state` 暴露 | 测试与健康检查可读取最终生效配置 |
+
+### 14.5 测试验证
+
+[`backend/test/08_cors/test_cors_config.py`](../../backend/test/08_cors/test_cors_config.py)：4 项断言全通过 ✅
+
+||| 场景 | 结果 |
+|||---|---|
+||| `CORS_ALLOW_ORIGINS=*` + `DEBUG=False` | ✅ PASS（进程退出非 0） |
+||| `CORS_ALLOW_ORIGINS=*` + `DEBUG=True` | ✅ PASS（启动 + credentials=False） |
+||| `CORS_ALLOW_ORIGINS=https://a.com,https://b.com` + `DEBUG=False` | ✅ PASS（启动 + credentials=True） |
+||| `CORS_ALLOW_ORIGINS=`（空字符串） | ✅ PASS（进程退出非 0） |
+
+### 14.6 涉及文件清单
+
+**修改：**
+- [`backend/app/config.py`](../../backend/app/config.py) — 加 `CORS_ALLOW_ORIGINS` 配置项 + VERSION 升级到 1.1.0
+- [`backend/app/main.py`](../../backend/app/main.py) — CORS middleware 读环境变量 + 安全校验 + `_cors_state` 暴露
+- [`docs/project/test.md`](../../docs/project/test.md) — §6 通过率表新增一行
+- [`docs/TESTS.md`](../../docs/TESTS.md) — 目录结构 + 索引新增 § 8
+- [`docs/project/project_state.md`](../../docs/project/project_state.md) — ISS-003 迁 § 3.3；§ 1 阶段；§ 2 #4 标记 ✅；§ 4 ADR 新增发布条目
+
+**新增：**
+- [`.env.example`](../../.env.example) — 环境变量模板
+- [`backend/test/08_cors/test_cors_config.py`](../../backend/test/08_cors/test_cors_config.py) — 4 项子进程启动校验
+- `update/2026-07-30_xx-yy.md` — 本次更新日志

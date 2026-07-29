@@ -16,9 +16,10 @@ class File(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)
 
     owner = relationship("User", back_populates="files")
-    parent = relationship("File", remote_side=[id], backref="children")
+    parent = relationship("File", remote_side=[id], backref="children", foreign_keys=[parent_id])
     versions = relationship("FileVersion", back_populates="file", cascade="all, delete-orphan")
     collaborators = relationship("FileCollaborator", back_populates="file", cascade="all, delete-orphan")
 

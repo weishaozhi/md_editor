@@ -15,6 +15,7 @@ export interface FileItem {
   owner_id: number;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
 }
 
 export interface FileTreeItem {
@@ -66,4 +67,15 @@ export interface WSMessage {
   position?: CursorPosition;
   content?: string;
   cursor_position?: CursorPosition;
+}
+
+export interface TrashSettings {
+  id: number;
+  user_id: number;
+  retention_hours: number | null;
+  created_at: string;
+}
+
+export interface TrashItem extends FileItem {
+  deleted_at: string;
 }
