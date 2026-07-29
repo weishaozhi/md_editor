@@ -26,6 +26,7 @@ backend/test/
 └── 07_trash/                      # 垃圾桶功能测试 + 文件树拖拽嵌套
     ├── test_trash_api.py
     ├── test_drag_folder.py
+    ├── test_folder_expand_ui.py
     └── test_report.md
 ```
 
@@ -185,6 +186,19 @@ backend/test/
 | **退出码** | 0 = 5/5 通过；1 = 有失败用例 |
 | **测试结果** | 5/5 通过 |
 
+### `test_folder_expand_ui.py`
+
+|| 项 | 内容 |
+|---|---|
+| **类型** | 端到端 HTTP + 纯 Python 模拟前端 store + 源码静态契约 |
+| **目标** | 验证文件夹展开/收起 UI 行为：后端嵌套结构、默认收起、toggle 切换、Zustand persist 序列化往返、源码缩进/左边框样式 |
+| **前置** | 后端已启动（`http://localhost:8000`） |
+| **覆盖场景** | 5 项：后端嵌套树结构 / store 默认全部收起 / toggleFolder 双向切换且互不干扰 / Set↔JSON 序列化往返 / FileTree.tsx 与 fileStore.ts 源码含 `isFolderExpanded` 守卫与 `ml-4`/`border-l`/`persist`/`partialize`/`onRehydrateStorage` |
+| **解决的问题** | 章节 13 —— 文件夹展开/收起按钮无效、文件夹内文件与外部文件未区分、刷新后展开状态丢失 |
+| **运行** | `python backend/test/07_trash/test_folder_expand_ui.py` |
+| **退出码** | 0 = 5/5 通过；1 = 有失败用例 |
+| **测试结果** | 5/5 通过 |
+
 ---
 
 ## 使用约定
@@ -243,5 +257,6 @@ python backend/test/05_export_rename/test_rename_export_version_comment.py
 | `05_export_rename/test_rename_export_version_comment.py` | 章节 12 —— 3 个新功能 E2E（重命名 / 导出 / 版本评论） |
 | `07_trash/test_trash_api.py` | 垃圾桶功能（软删除、恢复、永久删除、设置） |
 | `07_trash/test_drag_folder.py` | 文件树拖拽嵌套功能（5/5 通过） |
+| `07_trash/test_folder_expand_ui.py` | 章节 13 —— 文件夹展开/收起 + 嵌套视觉区分 + 展开状态持久化（5/5 通过） |
 
 完整的问题描述、根因、修复方案见 [`docs/MAINTENANCE.md`](./MAINTENANCE.md)。

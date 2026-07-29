@@ -116,6 +116,21 @@
   - 后端移除嵌套硬编码限制 + schema parent_id 改 `Union[int, str]`
 - **关联文件**：见 `MAINTENANCE.md` § 12.6
 
+#### ISS-TREE-002 🟩 文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 状态不持久化
+- **问题**：`update/2026-07-29_18-15.md` 中虽声明"修复 Chevron 按钮无效"，但仅切换图标，未把展开状态接入渲染层，导致 children 始终显示；嵌套子项与外部文件视觉平铺；刷新后展开状态全部丢失
+- **现象**：
+  1. 点击 Chevron 图标后图标切换，但文件夹内部文件始终显示，无法收起
+  2. 嵌套子项与外部文件视觉上无分组、无缩进
+  3. 浏览器刷新后所有文件夹回到默认收起状态
+- **根因**：详见 `MAINTENANCE.md` § 13（3 层根因分解）
+- **证据**：
+  - 最小复现：建一个外层文件夹 + 子文件夹 + 子文件 → 点击 Chevron → 子文件未隐藏
+  - 锁定测试：`backend/test/07_trash/test_folder_expand_ui.py`（5/5 通过；覆盖后端嵌套树 / 默认收起 / toggle 切换 / Set↔JSON 序列化 / 源码静态契约）
+- **解决方式**：
+  - `FileTree.tsx` 递归渲染处加 `isFolderExpanded(item.id)` 守卫，子 `FileTree` 用 `ml-4 pl-2 border-l` 包裹
+  - `fileStore.ts` 接入 Zustand `persist`：Set↔Array 序列化往返
+- **关联文件**：见 `MAINTENANCE.md` § 13.6
+
 ---
 
 ## 4. 风险与决策记录（ADR-lite）

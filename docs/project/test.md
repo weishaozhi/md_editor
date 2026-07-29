@@ -83,6 +83,7 @@ backend/test/
 | `06_stop_bat_test/test_stop_bat.py` | 2026-07-28 | 0 | § 13，会真停服务 |
 | `07_trash/test_trash.py` | 2026-07-29 | 0 | 垃圾桶功能 |
 | `07_trash/test_drag_folder.py` | 2026-07-29 | 0 | 文件树拖拽嵌套（5/5 通过） |
+| `07_trash/test_folder_expand_ui.py` | 2026-07-30 | 0 | 文件夹展开/收起 + 嵌套视觉（5/5 通过） |
 
 > 新增 / 删除脚本：同步更新本表与 [`../TESTS.md`](../TESTS.md)。
 

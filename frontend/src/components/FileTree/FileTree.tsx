@@ -26,6 +26,7 @@ interface FileTreeProps {
   onDragEnd?: (id: number) => void;
   draggedItemId?: number | null | undefined;
   searchQuery?: string;
+  depth?: number;
 }
 
 interface RowProps {
@@ -245,11 +246,13 @@ export default function FileTree({
   onDragEnd,
   draggedItemId,
   searchQuery = '',
+  depth = 0,
 }: FileTreeProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const { isFolderExpanded } = useFileStore();
 
   const filteredItems = searchQuery
     ? items.filter((item) =>
@@ -321,19 +324,22 @@ export default function FileTree({
             onDirectMove={onDirectMove}
           />
 
-          {item.is_folder && item.children.length > 0 && (
-            <FileTree
-              items={item.children}
-              onFileClick={onFileClick}
-              onRename={onRename}
-              onDelete={onDelete}
-              onMove={onMove}
-              onDirectMove={onDirectMove}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-              draggedItemId={draggedItemId}
-              searchQuery={searchQuery}
-            />
+          {item.is_folder && isFolderExpanded(item.id) && item.children.length > 0 && (
+            <div className="ml-4 pl-2 border-l border-slate-200 dark:border-slate-700">
+              <FileTree
+                items={item.children}
+                onFileClick={onFileClick}
+                onRename={onRename}
+                onDelete={onDelete}
+                onMove={onMove}
+                onDirectMove={onDirectMove}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                draggedItemId={draggedItemId}
+                searchQuery={searchQuery}
+                depth={depth + 1}
+              />
+            </div>
           )}
         </div>
       ))}

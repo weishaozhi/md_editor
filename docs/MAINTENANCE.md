@@ -18,6 +18,7 @@
 10. [版本对比 diff 整列染色 + 编辑界面同步滚动开关](#10-版本对比-diff-整列染色--编辑界面同步滚动开关)
 11. [Monaco IME 中文输入跳末尾 + 修复引发的两次布局回归](#11-monaco-ime-中文输入跳末尾--修复引发的两次布局回归)
 12. [文件树拖拽嵌套 + parent_id null 处理](#12-文件树拖拽嵌套--parent_id-null-处理)
+13. [文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 展开状态持久化](#13-文件夹展开收起按钮无效--嵌套视觉未区分--展开状态持久化)
 
 ---
 
@@ -1321,3 +1322,116 @@ if file.parent_id is not None:
 **新增：**
 - `backend/test/07_trash/test_drag_folder.py` — 5 场景端到端验证脚本
 - `backend/restart_server.py` — 后端重启辅助脚本
+
+---
+
+## 13. 文件夹展开/收起按钮无效 + 嵌套视觉未区分 + 展开状态持久化
+
+> **修复日期**: 2026-07-30
+> **状态**: ✅ 已修复并验证（5/5 测试通过）
+> **关联日志**: [`update/2026-07-30_00-17.md`](../../update/2026-07-30_00-17.md)
+> **前置章节**: § 12（拖拽嵌套 + parent_id null）—— 本章是其后续修复
+
+### 13.1 问题描述
+
+`update/2026-07-29_18-15.md` 中虽然声明"修复了 Chevron 按钮无效"，但仅切了图标，没有把展开状态接入渲染层，仍存在三处遗留问题：
+
+1. **children 始终展开，无法收起**：点击 Chevron 图标后图标会切换，但文件夹内部文件始终显示
+2. **嵌套子项与外部文件视觉上无区分**：子树与顶层项平铺，缺乏缩进/分组
+3. **刷新后展开状态全部丢失**：刷新浏览器或重启前端，所有文件夹回到默认收起状态
+
+### 13.2 根本原因（3 层）
+
+#### 13.2.1 渲染层未消费 store 状态
+`FileTree.tsx` 渲染子 `FileTree` 时仅判断 `item.children.length > 0`，未读取 `isFolderExpanded(item.id)`。
+
+#### 13.2.2 缺缩进/分组容器
+递归 `FileTree` 与外层项同级渲染，缺 `depth` 参数与外层 div，无法施加缩进和左边框。
+
+#### 13.2.3 store 没有持久化层
+`fileStore` 仅在内存中维护 `Set<number>`，未挂 Zustand `persist` 中间件，刷新后丢失。
+
+### 13.3 解决方案
+
+#### 13.3.1 把展开状态接入渲染（修复问题 1）
+[`frontend/src/components/FileTree/FileTree.tsx`](../../frontend/src/components/FileTree/FileTree.tsx) 在函数体顶部声明 `useFileStore()` 并加守卫：
+
+```tsx
+const { isFolderExpanded } = useFileStore();
+
+{item.is_folder && isFolderExpanded(item.id) && item.children.length > 0 && (
+  <div className="ml-4 pl-2 border-l border-slate-200 dark:border-slate-700">
+    <FileTree ... depth={depth + 1} />
+  </div>
+)}
+```
+
+#### 13.3.2 嵌套子项缩进 + 左边框（修复问题 2）
+`FileTreeProps` 新增 `depth?: number`（顶层默认 0），递归调用传入 `depth + 1`。子 `FileTree` 用 `ml-4 pl-2 border-l border-slate-200 dark:border-slate-700` 包住——左外边距 16px、内部留白 8px、左侧 1px 浅灰边框，文件夹内文件与外部文件视觉上分离。
+
+#### 13.3.3 Zustand persist 持久化（修复问题 3）
+[`frontend/src/store/fileStore.ts`](../../frontend/src/store/fileStore.ts) 加 `persist` 中间件，参照 `authStore.ts` 的写法：
+
+```ts
+export const useFileStore = create<FileState>()(
+  persist(
+    (set, get) => ({
+      expandedFolders: new Set<number>(),
+      toggleFolder: (folderId) => {
+        const expanded = new Set(get().expandedFolders);
+        expanded.has(folderId) ? expanded.delete(folderId) : expanded.add(folderId);
+        set({ expandedFolders: expanded });
+      },
+      isFolderExpanded: (folderId) => get().expandedFolders.has(folderId),
+      // ...
+    }),
+    {
+      name: 'file-tree-storage',
+      partialize: (state) => ({ expandedFolders: Array.from(state.expandedFolders) }),
+      onRehydrateStorage: () => (state) => {
+        if (state && Array.isArray((state as { expandedFolders?: unknown }).expandedFolders)) {
+          state.expandedFolders = new Set(
+            (state as { expandedFolders: number[] }).expandedFolders,
+          );
+        }
+      },
+    },
+  ),
+);
+```
+
+要点：`Set<number>` 不能直接 JSON 序列化，必须在 `partialize` 转 `Array<number>` 写入 `localStorage`，在 `onRehydrateStorage` 还原为 `Set<number>`。
+
+### 13.4 关键设计点
+
+|| 设计 | 为什么 |
+||---|---|
+|| 守卫放在渲染处而非 store | store 不该关心 UI；切换逻辑与渲染判断分离更易测 |
+|| 缩进写死 `ml-4`，不动态拼接 | Tailwind JIT 不支持运行时拼接类名；固定值覆盖 ≥ 6 层嵌套 |
+|| `border-l` + `pl-2` 组合 | 左边框提供分组标识，`pl-2` 让子项图标不贴边 |
+|| `Set` 序列化拆两步 | Zustand persist 不支持自定义类型转换，必须 `partialize` + `onRehydrateStorage` 配对 |
+|| 持久化键独立命名 `file-tree-storage` | 与 `auth-storage` 隔离，避免状态污染 |
+
+### 13.5 测试验证
+
+[`backend/test/07_trash/test_folder_expand_ui.py`](../../backend/test/07_trash/test_folder_expand_ui.py)：5 项断言全通过 ✅
+
+|| 场景 | 结果 |
+||---|---|
+|| 后端嵌套树结构（Outer→Inner→NestedDoc） | ✅ PASS |
+|| 默认 store 全部收起 | ✅ PASS |
+|| toggleFolder 双向切换且互不干扰 | ✅ PASS |
+|| Set ↔ JSON 序列化往返不丢数据 | ✅ PASS |
+|| 源码静态契约（`ml-4` / `border-l` / `pl-2` / `isFolderExpanded` / `persist` / `partialize` / `onRehydrateStorage`） | ✅ PASS |
+
+### 13.6 涉及文件清单
+
+**修改：**
+- [`frontend/src/components/FileTree/FileTree.tsx`](../../frontend/src/components/FileTree/FileTree.tsx) — `FileTreeProps` 加 `depth`、递归处加 `isFolderExpanded` 守卫与缩进/边框 div
+- [`frontend/src/store/fileStore.ts`](../../frontend/src/store/fileStore.ts) — 加 `persist` 中间件、`Set ↔ Array` 序列化往返
+- [`docs/TESTS.md`](../../docs/TESTS.md) — 索引新增脚本
+- [`docs/project/test.md`](../../docs/project/test.md) — §6 通过率表新增一行
+
+**新增：**
+- [`backend/test/07_trash/test_folder_expand_ui.py`](../../backend/test/07_trash/test_folder_expand_ui.py) — 5 场景端到端验证脚本
+- [`update/2026-07-30_00-17.md`](../../update/2026-07-30_00-17.md) — 本次更新日志
