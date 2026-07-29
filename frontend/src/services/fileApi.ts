@@ -20,8 +20,11 @@ export const fileApi = {
   renameFile: (id: number, name: string) =>
     api.put<FileItem>(`/files/${id}`, { name }).then(res => res.data),
 
-  moveFile: (id: number, parentId: number | null) =>
-    api.put<FileItem>(`/files/${id}`, { parent_id: parentId }).then(res => res.data),
+  moveFile: (id: number, parentId: number | null) => {
+    // 使用哨兵值 "__none__" 表示移动到根目录
+    const data = parentId === null ? { parent_id: '__none__' } : { parent_id: parentId };
+    return api.put<FileItem>(`/files/${id}`, data).then(res => res.data);
+  },
 
   exportFileUrl: (id: number, format: 'md' | 'html') =>
     `/api/files/${id}/export?format=${format}`,

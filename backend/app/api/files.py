@@ -112,9 +112,6 @@ async def create_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if file.is_folder and file.parent_id is not None:
-        raise HTTPException(status_code=400, detail="文件夹只能在根目录创建，不支持嵌套")
-
     db_file = File(
         name=file.name,
         path=file.name,
@@ -152,8 +149,16 @@ async def update_file(
         db_file.name = file.name
     if file.content is not None:
         db_file.content = file.content
+    # 处理 parent_id：支持整数ID或字符串哨兵 "__none__"
     if file.parent_id is not None:
-        db_file.parent_id = file.parent_id
+        if isinstance(file.parent_id, str) and file.parent_id == "__none__":
+            db_file.parent_id = None
+        elif isinstance(file.parent_id, str) and file.parent_id.isdigit():
+            db_file.parent_id = int(file.parent_id)
+        elif isinstance(file.parent_id, int):
+            db_file.parent_id = file.parent_id
+        else:
+            db_file.parent_id = None
         db_file.deleted_at = None
 
     await db.commit()

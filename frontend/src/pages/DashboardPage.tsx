@@ -144,6 +144,21 @@ export default function DashboardPage() {
     },
   });
 
+  const moveFileMutation = useMutation({
+    mutationFn: ({ fileId, parentId }: { fileId: number; parentId: number }) =>
+      fileApi.moveFile(fileId, parentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fileTree'] });
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '移动失败';
+      setActionError(msg);
+      setTimeout(() => setActionError(null), 3000);
+    },
+  });
+
   const handleRename = (id: number, newName: string) => {
     renameFileMutation.mutate({ id, name: newName });
   };
@@ -162,6 +177,10 @@ export default function DashboardPage() {
       fileName: item?.name || '',
       currentParentId,
     });
+  };
+
+  const handleDirectMove = (fileId: number, targetFolderId: number) => {
+    moveFileMutation.mutate({ fileId, parentId: targetFolderId });
   };
 
   const handleCreateFile = () => {
@@ -299,6 +318,7 @@ export default function DashboardPage() {
                 onRename={handleRename}
                 onDelete={handleDelete}
                 onMove={handleMove}
+                onDirectMove={handleDirectMove}
                 searchQuery={searchQuery}
               />
             )}

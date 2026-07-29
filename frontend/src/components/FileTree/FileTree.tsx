@@ -21,6 +21,7 @@ interface FileTreeProps {
   onRename?: (id: number, newName: string) => void;
   onDelete?: (id: number) => void;
   onMove?: (id: number, currentParentId: number | null) => void;
+  onDirectMove?: (fileId: number, targetFolderId: number) => void;
   onDragStart?: (id: number, isFolder: boolean) => void;
   onDragEnd?: (id: number) => void;
   draggedItemId?: number | null | undefined;
@@ -29,7 +30,6 @@ interface FileTreeProps {
 
 interface RowProps {
   item: FileTreeItem;
-  level?: number;
   isEditing: boolean;
   isHovered: boolean;
   editValue: string;
@@ -43,12 +43,11 @@ interface RowProps {
   onContextMenu?: (e: React.MouseEvent, id: number, isFolder: boolean, name: string) => void;
   onDragStart?: (id: number, isFolder: boolean) => void;
   onDragEnd?: (id: number) => void;
-  onMove?: (fileId: number, targetFolderId: number) => void;
+  onDirectMove?: (fileId: number, targetFolderId: number) => void;
 }
 
 function Row({
   item,
-  level,
   isEditing,
   isHovered,
   editValue,
@@ -62,12 +61,11 @@ function Row({
   onContextMenu,
   onDragStart,
   onDragEnd,
-  onMove,
+  onDirectMove,
 }: RowProps) {
   const { toggleFolder, isFolderExpanded } = useFileStore();
   const inputRef = useRef<HTMLInputElement>(null);
   const isDragging = draggedItemId === item.id;
-  const isDragOver = useState(false);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -96,13 +94,13 @@ function Row({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (item.is_folder && onMove) {
+    if (item.is_folder && onDirectMove) {
       const data = e.dataTransfer.getData('text/plain');
       if (data) {
         try {
           const { id } = JSON.parse(data);
           if (id !== item.id) {
-            onMove(id, item.id);
+            onDirectMove(id, item.id);
           }
         } catch {
           // ignore
@@ -128,8 +126,12 @@ function Row({
       {/* Folder chevron OR spacer */}
       {item.is_folder ? (
         <button
-          onClick={() => toggleFolder(item.id)}
-          className="p-0 m-0 bg-transparent border-0 outline-none flex items-center"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleFolder(item.id);
+          }}
+          className="p-0 m-0 bg-transparent border-0 outline-none flex items-center cursor-pointer"
         >
           {isFolderExpanded(item.id) ? (
             <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -238,6 +240,7 @@ export default function FileTree({
   onRename,
   onDelete,
   onMove,
+  onDirectMove,
   onDragStart,
   onDragEnd,
   draggedItemId,
@@ -315,6 +318,7 @@ export default function FileTree({
             onContextMenu={handleContextMenu}
             onDragStart={onDragStart}
             onDragEnd={handleInternalDragEnd}
+            onDirectMove={onDirectMove}
           />
 
           {item.is_folder && item.children.length > 0 && (
@@ -324,6 +328,7 @@ export default function FileTree({
               onRename={onRename}
               onDelete={onDelete}
               onMove={onMove}
+              onDirectMove={onDirectMove}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}
               draggedItemId={draggedItemId}
